@@ -112,6 +112,8 @@ export interface GovernorConfig {
   rpcUrl?: string;
   /** Optional funded classic account used for read-only simulation calls. */
   simulationAccount?: string;
+  /** Indexer base URL for off-chain queries (e.g. getVotingHistory) */
+  indexerUrl?: string;
   /** Maximum number of retry attempts for RPC calls (default: 3) */
   maxAttempts?: number;
   /** Base delay in milliseconds for exponential backoff (default: 1000) */
@@ -334,5 +336,37 @@ export interface BatchTransferEvent {
   /** Total amount transferred across all recipients */
   totalAmount: bigint;
   /** Ledger sequence number at which the transfer was executed */
+  ledger: number;
+}
+
+/** Result of checking whether an address can propose. */
+export interface CanProposeResult {
+  /** Whether the address is allowed to propose */
+  allowed: boolean;
+  /** Reason code: "ok", "threshold", "cooldown", "ratelimit", "paused" */
+  reason: string;
+  /** Ledger when cooldown ends (if in cooldown) */
+  cooldownEndsAt?: number;
+  /** Number of proposals made in current period */
+  proposalsThisPeriod: number;
+  /** Maximum proposals allowed per period */
+  maxPerPeriod: number;
+  /** Current voting power of the proposer */
+  votingPower: bigint;
+  /** Proposal threshold required */
+  threshold: bigint;
+}
+
+/** A single vote in a voter's history. */
+export interface VotingHistoryEntry {
+  /** Proposal ID that was voted on */
+  proposalId: bigint;
+  /** Vote direction (For, Against, or Abstain) */
+  support: VoteSupport;
+  /** Weight of the vote */
+  weight: bigint;
+  /** Optional reason provided with the vote */
+  reason?: string;
+  /** Ledger sequence when the vote was cast */
   ledger: number;
 }

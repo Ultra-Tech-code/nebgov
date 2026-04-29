@@ -221,6 +221,19 @@ pub struct ExecutionGasEstimate {
     pub estimated_fee_stroops: i128,
 }
 
+/// Result of checking whether an address can propose.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanProposeResult {
+    pub allowed: bool,
+    pub reason: Symbol,
+    pub cooldown_ends_at: Option<u32>,
+    pub proposals_this_period: u32,
+    pub max_per_period: u32,
+    pub voting_power: i128,
+    pub threshold: i128,
+}
+
 /// Vote support options.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1590,6 +1603,127 @@ impl GovernorContract {
             .persistent()
             .get(&DataKey::ProposalsInPeriod(address, current_period))
             .unwrap_or(0)
+    }
+
+    /// Check whether an address can currently submit a proposal.
+    ///
+    /// Returns a structured result indicating if the address is allowed to propose
+    /// and the reason if not allowed. This combines all proposal eligibility checks
+    /// into a single RPC call: paused state, proposal threshold, cooldown period,
+    /// and rate limit per period.
+    pub fn can_propose(env: Env, proposer: Address) -> CanProposeResult {
+        // Check if contract is paused
+        let is_paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::IsPaused)
+            .unwrap_or(false);
+        if is_paused {
+            return CanProposeResult {
+                allowed: false,
+                reason: symbol_short!("paused"),
+                cooldown_ends_at: None,
+                proposals_this_period: 0,
+                max_per_period: 0,
+                voting_power: 0,
+                threshold: 0,
+            };
+        }
+
+        // Get voting power
+        let votes_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::VotesToken)
+            .unwrap();
+        let votes_client = VotesClient::new(&env, &votes_token);
+        let voting_power = votes_client.get_votes(&proposer);
+
+        // Check proposal threshold
+        let threshold: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalThreshold)
+            .unwrap_or(0);
+        if voting_power < threshold {
+            return CanProposeResult {
+                allowed: false,
+                reason: symbol_short!("threshold"),
+                cooldown_ends_at: None,
+                proposals_this_period: 0,
+                max_per_period: 0,
+                voting_power,
+                threshold,
+            };
+        }
+
+        // Check cooldown period
+        let current_ledger = env.ledger().sequence();
+        let cooldown: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalCooldown)
+            .unwrap_or(100);
+        let last_proposal_ledger: Option<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LastProposalLedger(proposer.clone()));
+        if let Some(last) = last_proposal_ledger {
+            if current_ledger < last + cooldown {
+                return CanProposeResult {
+                    allowed: false,
+                    reason: symbol_short!("cooldown"),
+                    cooldown_ends_at: Some(last + cooldown),
+                    proposals_this_period: 0,
+                    max_per_period: 0,
+                    voting_power,
+                    threshold,
+                };
+            }
+        }
+
+        // Check rate limit per period
+        let period_duration: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalPeriodDuration)
+            .unwrap_or(10_000);
+        let max_per_period: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxProposalsPerPeriod)
+            .unwrap_or(5);
+        let current_period = current_ledger / period_duration;
+        let proposals_this_period: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposalsInPeriod(
+                proposer.clone(),
+                current_period,
+            ))
+            .unwrap_or(0);
+        if proposals_this_period >= max_per_period {
+            return CanProposeResult {
+                allowed: false,
+                reason: symbol_short!("ratelimit"),
+                cooldown_ends_at: None,
+                proposals_this_period,
+                max_per_period,
+                voting_power,
+                threshold,
+            };
+        }
+
+        // All checks passed
+        CanProposeResult {
+            allowed: true,
+            reason: symbol_short!("ok"),
+            cooldown_ends_at: None,
+            proposals_this_period,
+            max_per_period,
+            voting_power,
+            threshold,
+        }
     }
 
     /// Get the vote reason for a specific voter on a proposal.

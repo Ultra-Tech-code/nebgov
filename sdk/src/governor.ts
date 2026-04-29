@@ -25,6 +25,8 @@ import {
   Network,
   UnknownProposalStateError,
   TimelockInfo,
+  CanProposeResult,
+  VotingHistoryEntry,
 } from "./types";
 
 import { TimelockClient } from "./timelock";
@@ -1126,6 +1128,147 @@ export class GovernorClient {
     });
   }
 
+  /**
+   * Check whether an address can currently submit a proposal.
+   *
+   * This combines all proposal eligibility checks into a single RPC call:
+   * paused state, proposal threshold, cooldown period, and rate limit per period.
+   *
+   * @param proposer The address to check
+   * @returns A structured result indicating if the address is allowed to propose
+   */
+  async canPropose(proposer: string): Promise<CanProposeResult> {
+    return this.retry(async () => {
+      const result = await this.server.simulateTransaction(
+        new TransactionBuilder(
+          await this.server.getAccount(this.config.governorAddress),
+          { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+        )
+          .addOperation(
+            this.contract.call(
+              "can_propose",
+              nativeToScVal(proposer, { type: "address" }),
+            ),
+          )
+          .setTimeout(30)
+          .build(),
+      );
+
+      if (SorobanRpc.Api.isSimulationError(result)) {
+        throw new Error(`Simulation error: ${result.error}`);
+      }
+
+      const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+        .result?.retval;
+      if (!raw) throw new Error("No return value");
+
+      const native = scValToNative(raw) as Record<string, unknown>;
+      return {
+        allowed: Boolean(native.allowed),
+        reason: String(native.reason ?? "unknown"),
+        cooldownEndsAt: native.cooldown_ends_at 
+          ? Number(native.cooldown_ends_at) 
+          : undefined,
+        proposalsThisPeriod: Number(native.proposals_this_period ?? 0),
+        maxPerPeriod: Number(native.max_per_period ?? 0),
+        votingPower: toBigInt(native.voting_power ?? 0),
+        threshold: toBigInt(native.threshold ?? 0),
+      };
+    });
+  }
+
+  /**
+   * Get voting history for a specific address across all proposals.
+   *
+   * Scans VoteCast/vote events filtering by voter address. If an indexer is configured
+   * via the indexerUrl in GovernorConfig, it will use the indexer API for faster results.
+   *
+   * @param voter The address to get voting history for
+   * @param opts Optional parameters for pagination
+   * @returns Array of voting history entries sorted by ledger descending (most recent first)
+   */
+  async getVotingHistory(
+    voter: string,
+    opts?: { fromLedger?: number; limit?: number }
+  ): Promise<VotingHistoryEntry[]> {
+    const limit = opts?.limit ?? 50;
+    
+    // Try indexer first if configured
+    if (this.config.indexerUrl) {
+      try {
+        const response = await fetch(`${this.config.indexerUrl}/profile/${voter}`);
+        if (response.ok) {
+          const data = await response.json() as { votes?: any[] };
+          const votes = data.votes || [];
+          return votes
+            .map((v: any) => ({
+              proposalId: toBigInt(v.proposal_id),
+              support: v.support,
+              weight: toBigInt(v.weight),
+              reason: v.reason,
+              ledger: Number(v.ledger),
+            }))
+            .sort((a: VotingHistoryEntry, b: VotingHistoryEntry) => b.ledger - a.ledger)
+            .slice(0, limit);
+        }
+      } catch (e) {
+        console.warn("Indexer query failed, falling back to event scan:", e);
+      }
+    }
+
+    // Fallback to event scanning
+    return this.retry(async () => {
+      const events = await this.server.getEvents({
+        filters: [
+          {
+            type: "contract",
+            contractIds: [this.config.governorAddress],
+            topics: [["VoteCast", "vote"], [voter]],
+          },
+        ],
+        pagination: {
+          limit: limit * 2, // Fetch extra to filter for relevant events
+        },
+      });
+
+      const history: VotingHistoryEntry[] = [];
+      for (const event of events.events) {
+        if (!event.topic || event.topic.length < 2) continue;
+        
+        // Check if voter matches (second topic)
+        const voterTopic = scValToNative(event.topic[1]);
+        if (String(voterTopic) !== voter) continue;
+
+        // Parse event data
+        const data = event.value?.body?.val;
+        if (!data) continue;
+
+        const native = scValToNative(data) as Record<string, unknown>;
+        const proposalId = toBigInt(native.proposal_id ?? native.proposalId);
+        const supportRaw = native.support ?? native.support;
+        const support = typeof supportRaw === "number" 
+          ? supportRaw 
+          : Number(supportRaw);
+        const weight = toBigInt(native.weight ?? 0);
+        const reason = native.reason as string | undefined;
+        const ledger = Number(event.ledger);
+
+        history.push({
+          proposalId,
+          support: support as VoteSupport,
+          weight,
+          reason,
+          ledger,
+        });
+      }
+
+      // Sort by ledger descending and apply limit
+      return history
+        .sort((a, b) => b.ledger - a.ledger)
+        .slice(0, limit);
+    });
+  }
+
   /** Current Soroban ledger sequence from the RPC backing this client. */
   async getLatestLedger(): Promise<number> {
     return this.retry(async () => {
@@ -1522,53 +1665,6 @@ export class GovernorClient {
       const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
         .result?.retval;
       return raw ? Number(scValToNative(raw)) : 0;
-    });
-  }
-
-  /**
-   * Check if an address is allowed to create a new proposal.
-   *
-   * Verifies the proposal cooldown and period-based rate limits.
-   */
-  async canPropose(address: string): Promise<{
-    canPropose: boolean;
-    reason?: string;
-    availableAtLedger?: number;
-  }> {
-    return this.retry(async () => {
-      const settings = await this.getSettings();
-      const lastProposalLedger = await this.getLastProposalLedger(address);
-      const proposalsInPeriod = await this.getProposalsInPeriod(address);
-      const currentLedger = await this.getLatestLedger();
-
-      // Check cooldown
-      const cooldown = settings.proposalCooldown ?? 0;
-      if (lastProposalLedger > 0 && cooldown > 0) {
-        const nextAvailable = lastProposalLedger + cooldown;
-        if (currentLedger < nextAvailable) {
-          return {
-            canPropose: false,
-            reason: `Proposal cooldown active. Please wait ${nextAvailable - currentLedger} more ledgers.`,
-            availableAtLedger: nextAvailable,
-          };
-        }
-      }
-
-      // Check period limit
-      const maxProposals = settings.maxProposalsPerPeriod ?? 0;
-      const periodDuration = settings.proposalPeriodDuration ?? 0;
-      if (maxProposals > 0 && periodDuration > 0 && proposalsInPeriod >= maxProposals) {
-        const nextPeriodStart =
-          (Math.floor(currentLedger / periodDuration) + 1) *
-          periodDuration;
-        return {
-          canPropose: false,
-          reason: `Proposal limit reached for current period (${maxProposals} max).`,
-          availableAtLedger: nextPeriodStart,
-        };
-      }
-
-      return { canPropose: true };
     });
   }
 

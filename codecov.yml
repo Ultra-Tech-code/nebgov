@@ -1,12 +1,11 @@
 coverage:
   status:
-    project:
-      default:
-        target: 70%
-        threshold: 5%
     patch:
       default:
-        target: 80%
+        target: 80%      # new code must be 80% covered
+    project:
+      default:
+        threshold: 2%    # overall coverage can drop max 2%
 
 flags:
   rust:

@@ -56,28 +56,19 @@ jobs:
             -p sorogov-liquidity \
             -p sorogov-token-votes-wrapper
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage
         run: |
-          cargo tarpaulin \
-            -p sorogov-governor \
-            -p sorogov-timelock \
-            -p sorogov-token-votes \
-            -p sorogov-governor-factory \
-            -p sorogov-liquidity \
-            -p sorogov-token-votes-wrapper \
-            --out xml \
-            --output-dir coverage/
+          cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
-      - name: Upload coverage to Codecov
+      - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: coverage/cobertura.xml
+          files: lcov.info
           flags: rust
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
 
   clippy:
     name: Clippy
