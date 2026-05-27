@@ -257,6 +257,41 @@ fn update_config_succeeds_with_contract_self_auth() {
 }
 
 #[test]
+fn update_governor_limit_settings_succeed_with_contract_self_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let votes_token = Address::generate(&env);
+    let timelock = Address::generate(&env);
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let guardian = Address::generate(&env);
+    client.initialize(
+        &admin,
+        &votes_token,
+        &timelock,
+        &100u32,
+        &1000u32,
+        &4u32,
+        &0i128,
+        &guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    client.update_max_calldata_size(&20_000u32);
+    client.update_proposal_cooldown(&250u32);
+    client.update_max_proposals_per_period(&10u32);
+
+    let updated = client.get_settings();
+    assert_eq!(updated.max_calldata_size, 20_000);
+    assert_eq!(updated.proposal_cooldown, 250);
+    assert_eq!(updated.max_proposals_per_period, 10);
+    assert_eq!(count_topic(&env, "ConfigUpdated"), 3);
+}
+
+#[test]
 #[should_panic(expected = "voting delay exceeds maximum")]
 fn update_config_rejects_excessive_voting_delay() {
     let env = Env::default();

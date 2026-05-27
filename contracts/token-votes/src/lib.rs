@@ -239,7 +239,6 @@ impl TokenVotesContract {
     }
 
     /// Get current voting power of an account.
-    /// TODO issue #8: sum power from all delegators pointing to account.
     pub fn get_votes(env: Env, account: Address) -> i128 {
         let checkpoints: soroban_sdk::Vec<Checkpoint> = env
             .storage()

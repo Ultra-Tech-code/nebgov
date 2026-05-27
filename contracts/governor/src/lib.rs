@@ -1647,6 +1647,57 @@ impl GovernorContract {
         events::emit_config_updated(&env, &old_settings, &new_settings);
     }
 
+    /// Update the maximum calldata size per proposal action.
+    ///
+    /// Authorization is restricted to the governor's own contract address.
+    pub fn update_max_calldata_size(env: Env, max_calldata_size: u32) {
+        env.current_contract_address().require_auth();
+        assert!(max_calldata_size > 0, "max calldata size must be positive");
+
+        let old_settings = Self::get_settings(env.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxCalldataSize, &max_calldata_size);
+        let new_settings = Self::get_settings(env.clone());
+
+        events::emit_config_updated(&env, &old_settings, &new_settings);
+    }
+
+    /// Update the minimum ledgers between proposals from the same address.
+    ///
+    /// Authorization is restricted to the governor's own contract address.
+    pub fn update_proposal_cooldown(env: Env, proposal_cooldown: u32) {
+        env.current_contract_address().require_auth();
+
+        let old_settings = Self::get_settings(env.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCooldown, &proposal_cooldown);
+        let new_settings = Self::get_settings(env.clone());
+
+        events::emit_config_updated(&env, &old_settings, &new_settings);
+    }
+
+    /// Update the maximum proposals allowed per rate-limit period.
+    ///
+    /// Authorization is restricted to the governor's own contract address.
+    pub fn update_max_proposals_per_period(env: Env, max_proposals_per_period: u32) {
+        env.current_contract_address().require_auth();
+        assert!(
+            max_proposals_per_period > 0,
+            "max proposals per period must be positive"
+        );
+
+        let old_settings = Self::get_settings(env.clone());
+        env.storage().instance().set(
+            &DataKey::MaxProposalsPerPeriod,
+            &max_proposals_per_period,
+        );
+        let new_settings = Self::get_settings(env.clone());
+
+        events::emit_config_updated(&env, &old_settings, &new_settings);
+    }
+
     /// Get total proposal count.
     pub fn proposal_count(env: Env) -> u64 {
         env.storage()
