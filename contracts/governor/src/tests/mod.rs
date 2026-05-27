@@ -15,33 +15,44 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryIntoVal,
 };
 
-#[contract]
-pub struct MockTimelockContract;
+mod mock_timelock {
+    use super::*;
 
-#[contractimpl]
-impl MockTimelockContract {
-    pub fn min_delay(_env: Env) -> u64 {
-        1
+    #[contract]
+    pub struct MockTimelockContract;
+
+    #[contractimpl]
+    impl MockTimelockContract {
+        pub fn min_delay(_env: Env) -> u64 {
+            1
+        }
+
+        pub fn execution_window(_env: Env) -> u64 {
+            60
+        }
     }
+}
 
-    pub fn execution_window(_env: Env) -> u64 {
-        60
+mod mock_timelock_zero_window {
+    use super::*;
+
+    #[contract]
+    pub struct MockTimelockZeroWindowContract;
+
+    #[contractimpl]
+    impl MockTimelockZeroWindowContract {
+        pub fn min_delay(_env: Env) -> u64 {
+            1
+        }
+
+        pub fn execution_window(_env: Env) -> u64 {
+            0
+        }
     }
 }
 
-#[contract]
-pub struct MockTimelockZeroWindowContract;
-
-#[contractimpl]
-impl MockTimelockZeroWindowContract {
-    pub fn min_delay(_env: Env) -> u64 {
-        1
-    }
-
-    pub fn execution_window(_env: Env) -> u64 {
-        0
-    }
-}
+pub use mock_timelock::MockTimelockContract;
+pub use mock_timelock_zero_window::MockTimelockZeroWindowContract;
 
 #[allow(dead_code)]
 fn count_topic(env: &Env, topic_name: &str) -> usize {
