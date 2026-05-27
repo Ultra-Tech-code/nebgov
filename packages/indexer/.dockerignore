@@ -1,0 +1,51 @@
+# Dependencies (top-level and nested)
+node_modules/
+.pnpm-store/
+
+# Build output and artifacts
+dist/
+*.tsbuildinfo
+build/
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+.env.testnet
+
+# Tests and coverage
+__tests__/
+coverage/
+*.test.ts
+*.spec.ts
+jest.config.js
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# Documentation
+README.md
+CONTRIBUTING.md
+
+# Git
+.git
+.gitignore
+
+# Root-level build artifacts and workspace files
+Cargo.lock
+target/
+*.wasm
+out/
+.next/

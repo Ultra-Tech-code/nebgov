@@ -19,8 +19,8 @@ services:
 
   indexer:
     build:
-      context: packages/indexer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: packages/indexer/Dockerfile
     depends_on:
       db:
         condition: service_healthy
