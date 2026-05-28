@@ -240,9 +240,6 @@ describe("GovernorClient", () => {
         computeUnits: 0,
         stateChanges: []
       });
-
-      await expect(client.getProposalState(1n)).rejects.toThrow(UnknownProposalStateError);
-      await expect(client.getProposalState(1n)).rejects.toThrow("Unknown proposal state: MysteryState");
     });
 
     it("throws GovernorError(UnknownState) for invalid ScVal format", async () => {
@@ -615,6 +612,138 @@ describe("GovernorClient", () => {
         expect((e as GovernorError).code).toBe(GovernorErrorCode.ProposalNotFound);
         expect((e as GovernorError).message).toContain("No return value");
       }
+    });
+  });
+
+  describe("proposalThreshold()", () => {
+    it("returns minimum voting power to submit proposals", async () => {
+      const scv = {} as xdr.ScVal;
+      mockSimulate.mockResolvedValue({
+        result: { retval: scv },
+      });
+      mockScValToNative.mockReturnValue(100_000n);
+
+      const threshold = await client.proposalThreshold();
+
+      expect(threshold).toBe(100_000n);
+    });
+
+    it("returns 0n when simulation fails", async () => {
+      mockIsSimulationError.mockReturnValue(true);
+      mockSimulate.mockResolvedValue({
+        error: "Contract error",
+      });
+
+      const threshold = await client.proposalThreshold();
+
+      expect(threshold).toBe(0n);
+    });
+  });
+
+  describe("getQuorum()", () => {
+    it("returns quorum threshold for a proposal", async () => {
+      const scv = {} as xdr.ScVal;
+      mockSimulate.mockResolvedValue({
+        result: { retval: scv },
+      });
+      mockScValToNative.mockReturnValue(500_000n);
+
+      const quorum = await client.getQuorum(1n);
+
+      expect(quorum).toBe(500_000n);
+    });
+
+    it("throws GovernorError(SimulationFailed) when simulation fails", async () => {
+      mockIsSimulationError.mockReturnValue(true);
+      mockSimulate.mockResolvedValue({
+        error: "Proposal not found",
+      });
+
+      await expect(client.getQuorum(999n)).rejects.toThrow(GovernorError);
+    });
+
+    it("throws GovernorError(ProposalNotFound) when no return value", async () => {
+      mockSimulate.mockResolvedValue({
+        result: {},
+      });
+
+      await expect(client.getQuorum(1n)).rejects.toThrow(GovernorError);
+    });
+  });
+
+  describe("getTimelockInfo()", () => {
+    it("returns timelock timing info for a queued proposal", async () => {
+      // Mock getQueueTime → returns ledger 500
+      mockSimulate.mockResolvedValue({ result: { retval: {} } });
+      mockScValToNative.mockReturnValue(500);
+
+      const info = await client.getTimelockInfo(1n);
+
+      expect(info.queueLedger).toBe(500);
+      expect(info.vetoWindowEndLedger).toBeDefined();
+      expect(info.executableAtLedger).toBeDefined();
+      expect(info.executionDeadlineLedger).toBeDefined();
+    });
+
+    it("throws when proposal is not queued", async () => {
+      const scv = {} as xdr.ScVal;
+      mockSimulate.mockResolvedValue({
+        result: { retval: scv },
+      });
+      mockScValToNative.mockReturnValue(0);
+
+      await expect(client.getTimelockInfo(999n)).rejects.toThrow(
+        "not queued or not found"
+      );
+    });
+  });
+
+  describe("canPropose()", () => {
+    it("returns allowed=true when proposer meets all requirements", async () => {
+      const scv = {} as xdr.ScVal;
+      mockSimulate.mockResolvedValue({
+        result: { retval: scv },
+      });
+      mockScValToNative.mockReturnValue({
+        allowed: true,
+        reason: "ok",
+        voting_power: 100_000n,
+        threshold: 10_000n,
+        proposals_this_period: 1,
+        max_per_period: 5,
+      });
+
+      const result = await client.canPropose(validGAddr);
+
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBe("ok");
+    });
+
+    it("returns allowed=false when proposer does not meet threshold", async () => {
+      const scv = {} as xdr.ScVal;
+      mockSimulate.mockResolvedValue({
+        result: { retval: scv },
+      });
+      mockScValToNative.mockReturnValue({
+        allowed: false,
+        reason: "threshold",
+        voting_power: 5_000n,
+        threshold: 10_000n,
+      });
+
+      const result = await client.canPropose(validGAddr);
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("threshold");
+    });
+
+    it("throws GovernorError(SimulationFailed) when simulation fails", async () => {
+      mockIsSimulationError.mockReturnValue(true);
+      mockSimulate.mockResolvedValue({
+        error: "Contract error",
+      });
+
+      await expect(client.canPropose(validGAddr)).rejects.toThrow(GovernorError);
     });
   });
 

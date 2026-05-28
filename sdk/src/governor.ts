@@ -2119,15 +2119,11 @@ export class GovernorClient {
       timelockClient.executionWindow(),
     ]);
 
-    // Conversion logic: roughly 1 ledger per 10 seconds for veto window
-    // and for estimating executable/deadline ledgers.
-    const votingDelay = settings.votingDelay;
-    
-    // Per requirement: Use QueueTime + voting_delay/10
-    const vetoWindowEndLedger = executableAtLedger + Math.floor(votingDelay / 10);
-    
     // Executable after min_delay
     const executableAtLedger = queueLedger + Math.floor(Number(minDelay) / 10);
+    
+    // Per requirement: Use QueueTime + voting_delay/10 for veto window end
+    const vetoWindowEndLedger = queueLedger + Math.floor(settings.votingDelay / 10);
     
     // Deadline after execution_window
     const executionDeadlineLedger = executableAtLedger + Math.floor(Number(executionWindow) / 10);

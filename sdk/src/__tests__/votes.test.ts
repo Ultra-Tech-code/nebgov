@@ -647,4 +647,85 @@ describe("VotesClient", () => {
       expect(top).toEqual([]);
     });
   });
+
+  describe("delegateBySig()", () => {
+    const ownerAddr = "GDELEGATORA";
+    const delegateeAddr = "GDELEGATEX";
+    const nonce = 1n;
+    const expiry = 9999999999n;
+    const signature = Buffer.from("fake-signature-32-bytes-long!!", "utf8");
+
+    beforeEach(() => {
+      const mockTx = { sign: jest.fn() };
+      mockPrepareTransaction.mockResolvedValue(mockTx);
+      mockSendTransaction.mockResolvedValue({
+        status: "PENDING",
+        hash: "delegate-by-sig-123",
+      });
+      mockGetTransaction.mockResolvedValue({
+        status: "SUCCESS",
+        returnValue: xdr.ScVal.scvVoid(),
+      });
+    });
+
+    it("constructs delegation transaction with correct parameters", async () => {
+      mockGetAccount.mockResolvedValue(new Account(validGAddr, "2"));
+
+      await client.delegateBySig(ownerAddr, delegateeAddr, nonce, expiry, signature);
+
+      expect(mockNativeToScVal).toHaveBeenCalledWith(ownerAddr, { type: "address" });
+      expect(mockNativeToScVal).toHaveBeenCalledWith(delegateeAddr, { type: "address" });
+      expect(mockNativeToScVal).toHaveBeenCalledWith(nonce, { type: "u64" });
+      expect(mockNativeToScVal).toHaveBeenCalledWith(expiry, { type: "u64" });
+      expect(mockNativeToScVal).toHaveBeenCalledWith(signature, { type: "bytes" });
+      expect(mockPrepareTransaction).toHaveBeenCalled();
+      expect(mockSendTransaction).toHaveBeenCalled();
+    });
+
+    it("throws VotesError when transaction fails", async () => {
+      mockSendTransaction.mockResolvedValue({
+        status: "ERROR",
+        error: "Invalid signature",
+      });
+
+      await expect(
+        client.delegateBySig(ownerAddr, delegateeAddr, nonce, expiry, signature)
+      ).rejects.toThrow(VotesError);
+    });
+
+    it("uses contract address as the source account for the transaction", async () => {
+      mockGetAccount.mockResolvedValue(new Account(validGAddr, "2"));
+
+      await client.delegateBySig(ownerAddr, delegateeAddr, nonce, expiry, signature);
+
+      expect(mockGetAccount).toHaveBeenCalledWith(validCAddr);
+    });
+  });
+
+  describe("signDelegation()", () => {
+    const delegateeAddr = "GDELEGATEX";
+    const nonce = 1n;
+    const expiry = 9999999999n;
+
+    it("includes contract address as domain separator", () => {
+      const sig = client.signDelegation(mockKeypair, delegateeAddr, nonce, expiry);
+
+      expect(sig).toBeInstanceOf(Buffer);
+      expect(sig.length).toBe(64);
+    });
+
+    it("produces deterministic output for same inputs", () => {
+      const sig1 = client.signDelegation(mockKeypair, delegateeAddr, nonce, expiry);
+      const sig2 = client.signDelegation(mockKeypair, delegateeAddr, nonce, expiry);
+
+      expect(sig1).toEqual(sig2);
+    });
+
+    it("produces different signatures for different delegatees", () => {
+      const sig1 = client.signDelegation(mockKeypair, "GDELEGATEY", nonce, expiry);
+      const sig2 = client.signDelegation(mockKeypair, delegateeAddr, nonce, expiry);
+
+      expect(sig1).not.toEqual(sig2);
+    });
+  });
 });

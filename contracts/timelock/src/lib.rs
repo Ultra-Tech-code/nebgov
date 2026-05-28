@@ -7,6 +7,9 @@ use soroban_sdk::{
     Val, Vec,
 };
 
+/// Absolute minimum delay in seconds that the admin is allowed to set.
+const MIN_DELAY: u64 = 86_400;
+
 /// Timelock error codes.
 #[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +20,8 @@ pub enum TimelockError {
     PredecessorNotFound = 2,
     /// Operation can no longer be executed because its execution window elapsed.
     OperationExpired = 3,
+    /// New delay is below the absolute minimum allowed.
+    DelayTooShort = 4,
 }
 
 /// A scheduled timelock operation.
@@ -410,6 +415,9 @@ impl TimelockContract {
     pub fn update_delay(env: Env, caller: Address, new_delay: u64) {
         caller.require_auth();
         assert!(caller == Self::admin(env.clone()), "only admin");
+        if new_delay < MIN_DELAY {
+            env.panic_with_error(TimelockError::DelayTooShort);
+        }
         let old_delay: u64 = env.storage().instance().get(&DataKey::MinDelay).unwrap_or(86400);
         env.storage().instance().set(&DataKey::MinDelay, &new_delay);
         env.events().publish(
@@ -521,4 +529,123 @@ impl TimelockContract {
 }
 
 #[cfg(test)]
-mod test;
+mod test {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::Env;
+
+    fn setup() -> (Env, Address, Address) {
+        let env = Env::default();
+        let admin = Address::generate(&env);
+        let governor = Address::generate(&env);
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &governor, &86400, &1209600);
+        (env, admin, governor)
+    }
+
+    #[test]
+    fn test_update_delay_too_short() {
+        let (env, admin, _) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &Address::generate(&env), &86400, &1209600);
+        let client = TimelockContractClient::new(&env, &contract_id);
+
+        // Should panic when new delay is below MIN_DELAY (86400)
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_delay(&admin, &0);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_delay_accepts_valid() {
+        let (env, admin, _) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &Address::generate(&env), &86400, &1209600);
+        let client = TimelockContractClient::new(&env, &contract_id);
+
+        client.update_delay(&admin, &172800);
+
+        let stored: u64 = env.storage().instance().get(&DataKey::MinDelay).unwrap();
+        assert_eq!(stored, 172800);
+    }
+
+    #[test]
+    fn test_update_delay_emits_event() {
+        let (env, admin, _) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &Address::generate(&env), &86400, &1209600);
+        let mut client = TimelockContractClient::new(&env, &contract_id);
+
+        client.update_delay(&admin, &172800);
+
+        let events = env.events().all();
+        let found = events.iter().any(|event| {
+            event.0 == contract_id && event.1 == symbol_short!("upd_dly")
+        });
+        assert!(found, "DelayUpdated event not emitted");
+    }
+
+    #[test]
+    fn test_update_delay_requires_admin_auth() {
+        let (env, _, governor) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&governor, &Address::generate(&env), &86400, &1209600);
+        let client = TimelockContractClient::new(&env, &contract_id);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_delay(&governor, &172800);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_execution_window_zero_should_fail() {
+        let (env, admin, _) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &Address::generate(&env), &86400, &1209600);
+        let client = TimelockContractClient::new(&env, &contract_id);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_execution_window(&admin, &0);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_execution_window_emits_event() {
+        let (env, admin, _) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&admin, &Address::generate(&env), &86400, &1209600);
+        let mut client = TimelockContractClient::new(&env, &contract_id);
+
+        client.update_execution_window(&admin, &604800);
+
+        let events = env.events().all();
+        let found = events.iter().any(|event| {
+            event.0 == contract_id && event.1 == symbol_short!("upd_win")
+        });
+        assert!(found, "ExecutionWindowUpdated event not emitted");
+    }
+
+    #[test]
+    fn test_update_execution_window_requires_admin_auth() {
+        let (env, _, governor) = setup();
+        let contract_id = env.register_contract(None, TimelockContract);
+        TimelockContractClient::new(&env, &contract_id)
+            .initialize(&governor, &Address::generate(&env), &86400, &1209600);
+        let client = TimelockContractClient::new(&env, &contract_id);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_execution_window(&governor, &604800);
+        }));
+        assert!(result.is_err());
+    }
+}
