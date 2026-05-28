@@ -310,6 +310,10 @@ router.post(
     } catch (error) {
       await client.query("ROLLBACK");
       if (isUniqueViolation(error)) {
+        logger.warn(
+          { competitionId: (req.params as any).id, userId: req.userId },
+          "Duplicate competition join prevented by unique constraint",
+        );
         return res.status(409).json({ error: "Already joined this competition" });
       }
       logger.error({ err: error }, "Error joining competition");
