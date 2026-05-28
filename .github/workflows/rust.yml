@@ -68,7 +68,8 @@ jobs:
             -p sorogov-token-votes \
             -p sorogov-governor-factory \
             -p sorogov-liquidity \
-            -p sorogov-token-votes-wrapper
+            -p sorogov-token-votes-wrapper \
+            -p sorogov-treasury
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -130,6 +131,7 @@ jobs:
             -p sorogov-governor-factory \
             -p sorogov-liquidity \
             -p sorogov-token-votes-wrapper \
+            -p sorogov-treasury \
             --all-targets \
             -- -D warnings
 
