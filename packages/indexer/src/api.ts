@@ -345,8 +345,9 @@ export function createApp(server: SorobanRpc.Server): express.Application {
   // GET /proposals?offset=0&limit=20 or ?before=47&limit=20 or ?after=10&limit=20
   app.get("/proposals", async (req: Request, res: Response): Promise<void> => {
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
-    const before = req.query.before ? Number(req.query.before) : undefined;
-    const after = req.query.after ? Number(req.query.after) : undefined;
+    // Parse cursor IDs as BigInt to preserve u64 precision.
+    const before = req.query.before ? BigInt(req.query.before as string) : undefined;
+    const after = req.query.after ? BigInt(req.query.after as string) : undefined;
     const offset = Number(req.query.offset ?? 0);
 
     try {
@@ -378,19 +379,23 @@ export function createApp(server: SorobanRpc.Server): express.Application {
         const result = await pool.query(query, params);
         const proposals = result.rows;
 
-        // For cursor pagination, calculate next/prev cursors and hasMore
+        // For cursor pagination, calculate next/prev cursors and hasMore.
+        // Use BigInt to preserve u64 precision when comparing/passing IDs.
         if (before !== undefined || after !== undefined) {
-          let nextCursor: number | undefined;
-          let prevCursor: number | undefined;
+          let nextCursor: string | undefined;
+          let prevCursor: string | undefined;
           let hasMore = false;
 
           if (proposals.length > 0) {
+            const ids = proposals.map((p: { id: string | number }) => BigInt(p.id));
+            const minId = ids.reduce((a: bigint, b: bigint) => (a < b ? a : b));
+            const maxId = ids.reduce((a: bigint, b: bigint) => (a > b ? a : b));
+
             if (before !== undefined) {
               // For "before" queries, next cursor is the smallest ID in results
-              nextCursor = Math.min(...proposals.map(p => p.id));
-              prevCursor = Math.max(...proposals.map(p => p.id));
-              
-              // Check if there are more proposals with smaller IDs
+              nextCursor = minId.toString();
+              prevCursor = maxId.toString();
+
               const hasMoreResult = await pool.query(
                 "SELECT 1 FROM proposals WHERE id < $1 LIMIT 1",
                 [nextCursor]
@@ -399,10 +404,9 @@ export function createApp(server: SorobanRpc.Server): express.Application {
             } else {
               // For "after" queries, reverse the order to match DESC ordering
               proposals.reverse();
-              nextCursor = Math.min(...proposals.map(p => p.id));
-              prevCursor = Math.max(...proposals.map(p => p.id));
-              
-              // Check if there are more proposals with larger IDs
+              nextCursor = minId.toString();
+              prevCursor = maxId.toString();
+
               const hasMoreResult = await pool.query(
                 "SELECT 1 FROM proposals WHERE id > $1 LIMIT 1",
                 [prevCursor]
@@ -411,11 +415,11 @@ export function createApp(server: SorobanRpc.Server): express.Application {
             }
           }
 
-          return { 
-            proposals, 
-            nextCursor, 
-            prevCursor, 
-            hasMore 
+          return {
+            proposals,
+            nextCursor,
+            prevCursor,
+            hasMore
           };
         } else {
           // For offset pagination, return legacy format
@@ -431,16 +435,19 @@ export function createApp(server: SorobanRpc.Server): express.Application {
 
   // GET /proposals/:id
   app.get("/proposals/:id", async (req: Request, res: Response): Promise<void> => {
-    const id = parseInt(req.params.id);
-    
-    // Validate ID is a valid integer
-    if (isNaN(id) || id < 1) {
+    // Use BigInt to preserve full u64 precision — parseInt() silently truncates
+    // values beyond Number.MAX_SAFE_INTEGER (2^53-1), causing wrong lookups.
+    let id: bigint;
+    try {
+      id = BigInt(req.params.id);
+      if (id < 1n) throw new RangeError("non-positive");
+    } catch {
       res.status(400).json({ error: "Invalid proposal ID" });
       return;
     }
 
     try {
-      const result = await pool.query('SELECT * FROM proposals WHERE id = $1', [id]);
+      const result = await pool.query('SELECT * FROM proposals WHERE id = $1', [id.toString()]);
       if (!result.rows[0]) {
         res.status(404).json({ error: 'Proposal not found' });
         return;
