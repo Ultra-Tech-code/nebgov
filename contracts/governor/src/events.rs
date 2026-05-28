@@ -156,45 +156,33 @@ pub fn emit_vote_cast_with_reason(
     reason: String,
 ) {
     env.events().publish(
-        (Symbol::new(env, VOTE_CAST_WITH_REASON_TOPIC),),
-        VoteCastWithReasonEvent {
+        (
+            Symbol::new(env, VOTE_CAST_WITH_REASON_TOPIC),
             proposal_id,
-            voter: voter.clone(),
-            support: vote_support_to_u32(support),
-            weight,
-            reason,
-        },
+            voter.clone(),
+        ),
+        (vote_support_to_u32(support), weight, reason),
     );
 }
 
 pub fn emit_proposal_queued(env: &Env, proposal_id: u64, op_id: &Bytes, eta: u64) {
     env.events().publish(
-        (Symbol::new(env, PROPOSAL_QUEUED_TOPIC),),
-        ProposalQueuedEvent {
-            proposal_id,
-            op_id: op_id.clone(),
-            eta,
-        },
+        (Symbol::new(env, PROPOSAL_QUEUED_TOPIC), proposal_id),
+        (op_id.clone(), eta),
     );
 }
 
 pub fn emit_proposal_executed(env: &Env, proposal_id: u64, caller: &Address) {
     env.events().publish(
-        (Symbol::new(env, PROPOSAL_EXECUTED_TOPIC),),
-        ProposalExecutedEvent {
-            proposal_id,
-            caller: caller.clone(),
-        },
+        (Symbol::new(env, PROPOSAL_EXECUTED_TOPIC), proposal_id),
+        (caller.clone(),),
     );
 }
 
 pub fn emit_proposal_cancelled(env: &Env, proposal_id: u64, caller: &Address) {
     env.events().publish(
-        (Symbol::new(env, PROPOSAL_CANCELLED_TOPIC),),
-        ProposalCancelledEvent {
-            proposal_id,
-            caller: caller.clone(),
-        },
+        (Symbol::new(env, PROPOSAL_CANCELLED_TOPIC), proposal_id),
+        (caller.clone(),),
     );
 }
 

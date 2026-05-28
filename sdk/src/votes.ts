@@ -796,7 +796,15 @@ export class VotesClient {
     nonce: bigint,
     expiry: bigint,
   ): Buffer {
+    const domain = {
+      name: "nebgov-token-votes",
+      version: "1",
+      contractId: this.contract.contractId(),
+      networkPassphrase: this.networkPassphrase,
+    };
+
     const message = Buffer.concat([
+      Buffer.from(JSON.stringify(domain), "utf8"),
       Buffer.from(signer.publicKey()),
       Buffer.from(delegatee),
       Buffer.from(nonce.toString(16).padStart(16, "0"), "hex"),

@@ -28,6 +28,10 @@ const TOPIC_MAP: Record<string, string> = {
   DelegateChanged: "DelegateChanged",
   ConfigUpdated: "ConfigUpdated",
   GovernorUpgraded: "GovernorUpgraded",
+  ProposalExpired: "ProposalExpired",
+  ProposalCancelled: "ProposalCancelled",
+  Paused: "Paused",
+  Unpaused: "Unpaused",
 };
 
 export interface IndexerConfig {
@@ -145,6 +149,18 @@ export async function processEvents(
             case "GovernorUpgraded":
               await handleGovernorUpgraded(event, topics);
               break;
+            case "ProposalExpired":
+              await handleProposalExpired(event, topics);
+              break;
+            case "ProposalCancelled":
+              await handleProposalCancelled(event, topics);
+              break;
+            case "Paused":
+              await handlePaused(event, topics);
+              break;
+            case "Unpaused":
+              await handleUnpaused(event, topics);
+              break;
             default:
               break;
           }
@@ -195,12 +211,30 @@ async function handleVoteCast(
   topics: unknown[],
   withReason: boolean,
 ): Promise<void> {
-  const voter = topics[1] as string;
   const data = scValToNative(event.value) as unknown[];
-  const proposalId = String(data[0] as bigint);
-  const support = Number(data[1]);
-  const weight = String(withReason ? data[3] : data[2]);
-  const reason = withReason ? String(data[2]) : null;
+  let voter: string;
+  let proposalId: string;
+  let support: number;
+  let weight: string;
+  let reason: string | null;
+
+  if (withReason) {
+    // topic: (event_name, proposal_id, voter)
+    // value: (support, weight, reason)
+    voter = topics[2] as string;
+    proposalId = String(topics[1] as bigint);
+    support = Number(data[0]);
+    weight = String(data[1]);
+    reason = String(data[2]);
+  } else {
+    // topic: (event_name, voter)
+    // value: (proposal_id, support, weight)
+    voter = topics[1] as string;
+    proposalId = String(data[0] as bigint);
+    support = Number(data[1]);
+    weight = String(data[2]);
+    reason = null;
+  }
 
   // Upsert vote
   await pool.query(
@@ -440,4 +474,69 @@ async function handleGovernorUpgraded(
      VALUES ($1, $2)`,
     [event.ledger, hashStr],
   );
+}
+
+async function handleProposalExpired(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  const data = scValToNative(event.value) as unknown[];
+  const proposalId = String(data[0] as bigint);
+  await pool.query("UPDATE proposals SET state = $1 WHERE id = $2", [
+    "Expired",
+    proposalId,
+  ]);
+  invalidate(`proposal_votes:${proposalId}`);
+  invalidatePattern("proposals:");
+  broadcast({
+    type: "proposal_expired",
+    data: { proposal_id: proposalId },
+  });
+}
+
+async function handleProposalCancelled(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  // topic: (event_name, proposal_id)
+  // value: (caller)
+  const proposalId = String(topics[1] as bigint);
+  await pool.query("UPDATE proposals SET cancelled = true WHERE id = $1", [
+    proposalId,
+  ]);
+  invalidate(`proposal_votes:${proposalId}`);
+  invalidatePattern("proposals:");
+  broadcast({
+    type: "proposal_cancelled",
+    data: { proposal_id: proposalId },
+  });
+}
+
+async function handlePaused(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  const pauser = topics[1] as string;
+  const ledger = event.ledger;
+  await pool.query(
+    `INSERT INTO governance_events (event_type, pauser, ledger)
+     VALUES ($1, $2, $3)`,
+    ["Paused", pauser, ledger],
+  );
+  invalidatePattern("governance:");
+  broadcast({ type: "paused", data: { pauser, ledger } });
+}
+
+async function handleUnpaused(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  const ledger = event.ledger;
+  await pool.query(
+    `INSERT INTO governance_events (event_type, ledger)
+     VALUES ($1, $2)`,
+    ["Unpaused", ledger],
+  );
+  invalidatePattern("governance:");
+  broadcast({ type: "unpaused", data: { ledger } });
 }
