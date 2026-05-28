@@ -77,6 +77,13 @@ pub trait GovernorTrait {
         vote_type: VoteType,
         proposal_grace_period: u32,
     );
+    fn set_initial_config(
+        env: Env,
+        admin: Address,
+        max_calldata_size: u32,
+        proposal_cooldown: u32,
+        max_proposals_per_period: u32,
+    );
 }
 
 #[contract]

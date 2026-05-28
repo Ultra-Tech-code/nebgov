@@ -46,6 +46,7 @@ pub enum GovernorError {
     ArithmeticOverflow = 27,
     VotePeriodTooShort = 28,
     ExecutionWindowZero = 29,
+    TooManyCalldataEntries = 30,
 }
 
 /// Cross-contract interface for the Timelock contract.
@@ -496,6 +497,50 @@ impl GovernorContract {
         env.storage().instance().set(&DataKey::IsPaused, &false);
         // Set admin as initial pauser
         env.storage().instance().set(&DataKey::Pauser, &admin);
+    }
+
+    /// Override security settings after initialization (admin-only, before any proposals).
+    ///
+    /// The governor's `initialize()` hardcodes three security values:
+    /// `MaxCalldataSize = 10000`, `ProposalCooldown = 100`, and
+    /// `MaxProposalsPerPeriod = 5`.  This function lets the admin change
+    /// those values before the first proposal is created.
+    ///
+    /// After the first proposal is submitted, this function can no longer
+    /// be called and operators must use the governance `update_config` path instead.
+    pub fn set_initial_config(
+        env: Env,
+        admin: Address,
+        max_calldata_size: u32,
+        proposal_cooldown: u32,
+        max_proposals_per_period: u32,
+    ) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(GovernorError::UnauthorizedPause));
+        if admin != stored_admin {
+            env.panic_with_error(GovernorError::UnauthorizedPause);
+        }
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProposalCount)
+            .unwrap_or(0);
+        if count > 0 {
+            env.panic_with_error(GovernorError::ProposalRateLimited);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxCalldataSize, &max_calldata_size);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalCooldown, &proposal_cooldown);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxProposalsPerPeriod, &max_proposals_per_period);
     }
 
     /// Create a new governance proposal.

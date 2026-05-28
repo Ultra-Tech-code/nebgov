@@ -92,6 +92,7 @@ pub enum DataKey {
     SpentThisPeriod(Address, u32),
     IsSlashed(Address),
     SlashingHistory(Address),
+    PendingOwner,
 }
 
 #[contractclient(name = "TreasuryClient")]
@@ -142,6 +143,49 @@ impl TreasuryContract {
         env.storage()
             .instance()
             .set(&DataKey::DayWindowStart, &env.ledger().timestamp());
+    }
+
+    /// Propose a new owner (governor) for the treasury.
+    /// Current governor must call this.
+    pub fn propose_owner(env: Env, new_owner: Address) {
+        let governor: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Governor)
+            .expect("not initialized");
+        governor.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingOwner, &new_owner);
+        env.events()
+            .publish((Symbol::new(&env, "OwnershipProposed"),), (new_owner,));
+    }
+
+    /// Accept ownership of the treasury.
+    /// New owner must call this to finalize the transfer.
+    pub fn accept_ownership(env: Env) {
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingOwner)
+            .expect("no pending owner");
+        pending.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::Governor, &pending);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingOwner);
+        env.events()
+            .publish((Symbol::new(&env, "OwnershipTransferred"),), (pending,));
+    }
+
+    /// Get the current owner (governor) address.
+    pub fn get_owner(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Governor)
+            .expect("not initialized")
     }
 
     /// Configure a per-token spending cap for batch transfers.

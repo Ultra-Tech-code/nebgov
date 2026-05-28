@@ -116,7 +116,11 @@ function getClients() {
 function buildDescription(title: string, desc: string, ipfs: string): string {
   // We store the title + description content on-chain as a single string
   // and we also store the IPFS link for rich metadata access.
-  return `${title}\n\n${desc}`;
+  const base = `${title}\n\n${desc}`;
+  if (ipfs) {
+    return `${base}\n\n<!-- ipfs:${ipfs} -->`;
+  }
+  return base;
 }
 
 function buildPayload(actions: WizardAction[], governorAddress: string) {
