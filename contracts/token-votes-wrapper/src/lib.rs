@@ -468,6 +468,48 @@ mod tests {
         assert_eq!(wrapper.get_depositor_balance(&user2), 900);
     }
 
+    /// Regression test for issue #392: delegate() must move only the caller's
+    /// deposited balance, never the delegatee's aggregate voting power.
+    #[test]
+    fn test_redelegate_does_not_inflate_voting_power() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        let carol = Address::generate(&env);
+        let dave = Address::generate(&env);
+
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_addr = sac.address();
+        let token_client = soroban_sdk::token::StellarAssetClient::new(&env, &token_addr);
+        token_client.mint(&alice, &100_i128);
+        token_client.mint(&bob, &900_i128);
+
+        let wrapper_id = env.register(TokenVotesWrapperContract, ());
+        let wrapper = TokenVotesWrapperContractClient::new(&env, &wrapper_id);
+        wrapper.initialize(&admin, &token_addr);
+
+        // Alice deposits 100, Bob deposits 900, both delegate to Carol.
+        // Carol now has 1000 total power.
+        wrapper.deposit(&alice, &100_i128);
+        wrapper.deposit(&bob, &900_i128);
+        wrapper.delegate(&alice, &carol);
+        wrapper.delegate(&bob, &carol);
+        assert_eq!(wrapper.get_votes(&carol), 1000);
+
+        // Alice redelegates to Dave.  Only Alice's 100 should move.
+        wrapper.delegate(&alice, &dave);
+
+        // Dave must have exactly 100 (Alice's deposit), not 1000.
+        assert_eq!(wrapper.get_votes(&dave), 100, "voting power inflation detected");
+        assert_eq!(wrapper.get_votes(&carol), 900, "carol's power should be exactly bob's deposit");
+
+        // Total voting power must be conserved.
+        assert_eq!(wrapper.get_votes(&dave) + wrapper.get_votes(&carol), 1000);
+    }
+
     #[test]
     #[should_panic(expected = "InsufficientBalance")]
     fn test_withdraw_rejects_overdraw_from_shared_delegatee() {
