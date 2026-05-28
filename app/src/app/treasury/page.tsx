@@ -55,13 +55,6 @@ function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-function isEnvFallbackOwner(publicKey: string): boolean {
-  const raw = process.env.NEXT_PUBLIC_TREASURY_OWNER_PUBKEYS;
-  if (!raw?.trim()) return false;
-  const keys = raw.split(",").map((s) => s.trim().toUpperCase());
-  return keys.includes(publicKey.toUpperCase());
-}
-
 export default function TreasuryPage() {
   const { isConnected, publicKey, signTransaction } = useWallet();
 
@@ -75,6 +68,7 @@ export default function TreasuryPage() {
     Record<string, boolean>
   >({});
   const [ownerOnChain, setOwnerOnChain] = useState<boolean | null>(null);
+  const [ownerCheckComplete, setOwnerCheckComplete] = useState(false);
   const [spendingCap, setSpendingCap] = useState<TreasurySpendingCap | null>(
     null,
   );
@@ -115,12 +109,7 @@ export default function TreasuryPage() {
 
   const readViewer = publicKey ?? treasuryAccountId;
 
-  const canWrite = Boolean(
-    isConnected &&
-    publicKey &&
-    (ownerOnChain === true ||
-      (ownerOnChain === null && isEnvFallbackOwner(publicKey))),
-  );
+  const canWrite = Boolean(isConnected && publicKey && ownerOnChain === true);
 
   async function fetchBalances() {
     if (!treasuryAccountId) return;
@@ -204,18 +193,22 @@ export default function TreasuryPage() {
       setAlreadyApproved(approvedMap);
 
       if (publicKey) {
+        setOwnerCheckComplete(false);
         if (owners && owners.length > 0) {
           setOwnerOnChain(
             owners.some(
               (owner) => owner.toUpperCase() === publicKey.toUpperCase(),
             ),
           );
+          setOwnerCheckComplete(true);
         } else {
           const own = await treasuryClient.isOwner(viewer, publicKey);
           setOwnerOnChain(own);
+          setOwnerCheckComplete(true);
         }
       } else {
         setOwnerOnChain(null);
+        setOwnerCheckComplete(false);
       }
 
       if (treasuryTokenAddress) {
@@ -255,10 +248,14 @@ export default function TreasuryPage() {
       const msg =
         e instanceof Error ? e.message : "Failed to load treasury data";
       setError(msg);
+      if (isConnected && publicKey) {
+        setOwnerOnChain(false);
+        setOwnerCheckComplete(true);
+      }
     } finally {
       setLoading(false);
     }
-  }, [fetchPendingTxs, readViewer]);
+  }, [fetchPendingTxs, isConnected, publicKey, readViewer]);
 
   useEffect(() => {
     if (!readViewer) {
@@ -270,6 +267,8 @@ export default function TreasuryPage() {
       setLoading(false);
       return;
     }
+    setOwnerOnChain(null);
+    setOwnerCheckComplete(false);
     refreshAll();
   }, [readViewer, refreshAll, treasuryClient]);
 
@@ -384,6 +383,12 @@ export default function TreasuryPage() {
         <div className="mb-6 bg-gray-100 border border-gray-200 rounded-xl p-4 text-sm text-gray-700">
           Connect an owner wallet to submit or approve. Balances and pending
           transactions load using the treasury account when configured.
+        </div>
+      )}
+
+      {isConnected && publicKey && !ownerCheckComplete && (
+        <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
+          Verifying treasury owner permissions...
         </div>
       )}
 

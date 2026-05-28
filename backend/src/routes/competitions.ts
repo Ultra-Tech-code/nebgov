@@ -10,6 +10,17 @@ import { logger } from "../logger";
 
 const router = Router();
 
+type PostgresError = Error & { code?: string };
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as PostgresError).code === "23505"
+  );
+}
+
 // Zod schemas for validation
 const listCompetitionsSchema = z.object({
   is_active: z.enum(["true", "false"]).transform(v => v === "true").optional(),
@@ -287,18 +298,6 @@ router.post(
           .json({ error: "Competition has already started" });
       }
 
-      const existingResult = await client.query(
-        "SELECT * FROM competition_participants WHERE competition_id = $1 AND user_id = $2",
-        [competitionId, userId],
-      );
-
-      if (existingResult.rows.length > 0) {
-        await client.query("ROLLBACK");
-        return res
-          .status(400)
-          .json({ error: "Already joined this competition" });
-      }
-
       const insertResult = await client.query<CompetitionParticipant>(
         `INSERT INTO competition_participants (competition_id, user_id, entry_fee_paid)
          VALUES ($1, $2, $3)
@@ -314,6 +313,13 @@ router.post(
       });
     } catch (error) {
       await client.query("ROLLBACK");
+      if (isUniqueViolation(error)) {
+        logger.warn(
+          { competitionId: (req.params as any).id, userId: req.userId },
+          "Duplicate competition join prevented by unique constraint",
+        );
+        return res.status(409).json({ error: "Already joined this competition" });
+      }
       logger.error({ err: error }, "Error joining competition");
       res.status(500).json({ error: "Failed to join competition" });
     } finally {
