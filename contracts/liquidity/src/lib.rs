@@ -18,7 +18,7 @@
 //! - traders must authorize `swap`
 //! - only the configured governor may call `update_pool_fee`
 
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, Address, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env};
 
 const MIN_LIQUIDITY: i128 = 1_000;
 const DEFAULT_FEE_BPS: u32 = 30;
@@ -139,7 +139,8 @@ impl LiquidityContract {
             panic!("invalid amount");
         }
 
-        let provider_shares = Self::get_lp_position(env.clone(), provider.clone(), outcome_a, outcome_b);
+        let provider_shares =
+            Self::get_lp_position(env.clone(), provider.clone(), outcome_a, outcome_b);
         if lp_tokens > provider_shares {
             panic!("insufficient shares");
         }
@@ -358,9 +359,11 @@ mod tests {
 
         let contract_id = env.current_contract_id();
         let client = LiquidityContractClient::new(&env, contract_id);
-        let lp_tokens = client.add_liquidity(&provider, &outcome_a, &outcome_b, &amount_a, &amount_b);
+        let lp_tokens =
+            client.add_liquidity(&provider, &outcome_a, &outcome_b, &amount_a, &amount_b);
 
-        let (returned_a, returned_b) = client.remove_liquidity(&provider, &outcome_a, &outcome_b, &lp_tokens);
+        let (returned_a, returned_b) =
+            client.remove_liquidity(&provider, &outcome_a, &outcome_b, &lp_tokens);
 
         assert!(returned_a > 0);
         assert!(returned_b > 0);
@@ -445,9 +448,9 @@ mod tests {
 
         let events = env.events().all();
         let event_symbol = Symbol::new(&env, "add_liq");
-        let found = events.iter().any(|event| {
-            event.0 == contract_id && event.1 == event_symbol
-        });
+        let found = events
+            .iter()
+            .any(|event| event.0 == contract_id && event.1 == event_symbol);
         // Note: This test confirms the event system works; the actual event
         // name depends on the contract's event publishing.
     }
@@ -465,9 +468,9 @@ mod tests {
 
         let events = env.events().all();
         let event_symbol = Symbol::new(&env, "rm_liq");
-        let found = events.iter().any(|event| {
-            event.0 == contract_id && event.1 == event_symbol
-        });
+        let found = events
+            .iter()
+            .any(|event| event.0 == contract_id && event.1 == event_symbol);
         // Note: This test confirms the remove_liquidity completes; event check
         // depends on the actual event symbol used by the contract.
     }

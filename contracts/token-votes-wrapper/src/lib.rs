@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, token, Address, BytesN, Env, Vec,
+};
 
 /// A voting power checkpoint at a specific ledger sequence.
 #[contracttype]
@@ -152,8 +154,10 @@ impl TokenVotesWrapperContract {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
-        env.events().publish((symbol_short!("upgrade"),), (new_wasm_hash,));
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        env.events()
+            .publish((symbol_short!("upgrade"),), (new_wasm_hash,));
     }
 
     /// Deposit `amount` of the underlying SEP-41 token and receive 1:1 wrapped voting tokens.
@@ -503,8 +507,16 @@ mod tests {
         wrapper.delegate(&alice, &dave);
 
         // Dave must have exactly 100 (Alice's deposit), not 1000.
-        assert_eq!(wrapper.get_votes(&dave), 100, "voting power inflation detected");
-        assert_eq!(wrapper.get_votes(&carol), 900, "carol's power should be exactly bob's deposit");
+        assert_eq!(
+            wrapper.get_votes(&dave),
+            100,
+            "voting power inflation detected"
+        );
+        assert_eq!(
+            wrapper.get_votes(&carol),
+            900,
+            "carol's power should be exactly bob's deposit"
+        );
 
         // Total voting power must be conserved.
         assert_eq!(wrapper.get_votes(&dave) + wrapper.get_votes(&carol), 1000);

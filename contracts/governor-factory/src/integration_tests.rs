@@ -424,7 +424,11 @@ fn test_factory_emits_deployment_event() {
 
     let last_event = events.last().expect("expected a deployment event");
     assert_eq!(last_event.0, factory_id);
-    assert_eq!(last_event.1.len(), 5, "deployment event should include id and contract addresses");
+    assert_eq!(
+        last_event.1.len(),
+        5,
+        "deployment event should include id and contract addresses"
+    );
 }
 
 // ---------------------------------------------------------------------------

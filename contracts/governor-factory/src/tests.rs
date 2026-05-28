@@ -205,7 +205,7 @@ fn test_deploy_rejects_zero_voting_period() {
         &deployer,
         &token,
         &100u32,
-        &0u32,    // zero voting_period — must be rejected
+        &0u32, // zero voting_period — must be rejected
         &50u32,
         &0i128,
         &3600u64,
@@ -241,7 +241,7 @@ fn test_deploy_rejects_zero_quorum_numerator() {
         &token,
         &100u32,
         &1000u32,
-        &0u32,    // zero quorum_numerator — must be rejected
+        &0u32, // zero quorum_numerator — must be rejected
         &0i128,
         &3600u64,
         &guardian,
@@ -278,7 +278,7 @@ fn test_deploy_rejects_zero_timelock_delay() {
         &1000u32,
         &50u32,
         &0i128,
-        &0u64,    // zero timelock_delay — must be rejected
+        &0u64, // zero timelock_delay — must be rejected
         &guardian,
         &1u32,
         &120_960u32,
@@ -315,7 +315,7 @@ fn test_deploy_rejects_invalid_vote_type() {
         &0i128,
         &3600u64,
         &guardian,
-        &99u32,   // invalid vote_type — must be rejected
+        &99u32, // invalid vote_type — must be rejected
         &120_960u32,
     );
 }

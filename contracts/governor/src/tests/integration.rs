@@ -680,8 +680,7 @@ fn test_cancel_queued_after_window_closes() {
 
     // Advance ledger far past the veto window (min_delay is 100 seconds, roughly 10-20 ledgers)
     // Use a very large advance to ensure we're well past the veto window
-    env.ledger()
-        .with_mut(|l| l.sequence_number += 1000);
+    env.ledger().with_mut(|l| l.sequence_number += 1000);
 
     // Try to cancel after veto window closes — should fail
     governor_client.cancel_queued(&guardian, &proposal_id);
@@ -1019,7 +1018,12 @@ fn setup_dynamic_quorum_governor<'a>(
     env: &'a Env,
     total_supply: i128,
     quorum_numerator: u32,
-) -> (GovernorContractClient<'a>, ConfigurableVotesContractClient<'a>, Address, Address) {
+) -> (
+    GovernorContractClient<'a>,
+    ConfigurableVotesContractClient<'a>,
+    Address,
+    Address,
+) {
     let admin = Address::generate(env);
     let guardian = Address::generate(env);
 
@@ -1051,10 +1055,7 @@ fn setup_dynamic_quorum_governor<'a>(
 }
 
 /// Create a minimal proposal and return its ID.
-fn create_minimal_proposal(
-    env: &Env,
-    governor_client: &GovernorContractClient,
-) -> u64 {
+fn create_minimal_proposal(env: &Env, governor_client: &GovernorContractClient) -> u64 {
     let proposer = Address::generate(env);
     let mock_target = env.register(MockTarget, ());
 
@@ -1098,7 +1099,10 @@ fn test_dynamic_quorum_uses_max_of_static_and_dynamic() {
 
     // Sanity: without dynamic quorum, result is the static quorum.
     let static_q = governor_client.quorum(&proposal_id);
-    assert_eq!(static_q, 100_000, "static quorum should be 10% of 1_000_000");
+    assert_eq!(
+        static_q, 100_000,
+        "static quorum should be 10% of 1_000_000"
+    );
 
     // Register a configurable oracle: price = $1 (1_000_000 in 6-decimal).
     let oracle_id = env.register(ConfigurableOracleContract, ());
@@ -1517,18 +1521,12 @@ fn test_unpause_via_governance_restores_functionality() {
 
     let ts_before_queue = env.ledger().timestamp();
     governor_client.queue(&proposal_id);
-    assert_eq!(
-        governor_client.state(&proposal_id),
-        ProposalState::Queued
-    );
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Queued);
 
     env.ledger()
         .with_mut(|l| l.timestamp = ts_before_queue + min_delay + 1);
     governor_client.execute(&proposal_id);
-    assert_eq!(
-        governor_client.state(&proposal_id),
-        ProposalState::Executed
-    );
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Executed);
 
     // Pause the contract and verify operations are blocked
     governor_client.pause(&admin);

@@ -113,10 +113,7 @@ impl TreasuryContract {
     /// Initialize with owners, threshold, and governor address.
     pub fn initialize(env: Env, owners: Vec<Address>, threshold: u32, governor: Address) {
         assert!(!owners.is_empty(), "no owners");
-        assert!(
-            threshold > 0 && threshold <= owners.len(),
-            "bad threshold"
-        );
+        assert!(threshold > 0 && threshold <= owners.len(), "bad threshold");
         env.storage().instance().set(&DataKey::Owners, &owners);
         env.storage()
             .instance()
@@ -170,12 +167,8 @@ impl TreasuryContract {
             .get(&DataKey::PendingOwner)
             .expect("no pending owner");
         pending.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::Governor, &pending);
-        env.storage()
-            .instance()
-            .remove(&DataKey::PendingOwner);
+        env.storage().instance().set(&DataKey::Governor, &pending);
+        env.storage().instance().remove(&DataKey::PendingOwner);
         env.events()
             .publish((Symbol::new(&env, "OwnershipTransferred"),), (pending,));
     }
@@ -218,9 +211,7 @@ impl TreasuryContract {
 
     /// Get the configured spending cap for a token, if any.
     pub fn get_spending_cap(env: Env, token: Address) -> Option<SpendingCap> {
-        env.storage()
-            .instance()
-            .get(&DataKey::SpendingCap(token))
+        env.storage().instance().get(&DataKey::SpendingCap(token))
     }
 
     /// Get the amount spent in the current spending period for a token.
@@ -541,9 +532,10 @@ impl TreasuryContract {
         ));
 
         if cap.is_some() {
-            env.storage()
-                .persistent()
-                .set(&DataKey::SpentThisPeriod(token.clone(), period_start), &new_spent);
+            env.storage().persistent().set(
+                &DataKey::SpentThisPeriod(token.clone(), period_start),
+                &new_spent,
+            );
         }
 
         let hash = env.crypto().sha256(&hash_input);
