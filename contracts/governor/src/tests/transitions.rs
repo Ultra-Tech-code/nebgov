@@ -233,6 +233,48 @@ fn test_cancelled_by_proposer() {
 }
 
 #[test]
+#[should_panic]
+/// Verifies that a random token holder cannot cancel another user's proposal.
+fn test_cancel_unauthorized_by_random_holder() {
+    let (env, client, _, proposer, _) = setup();
+    let proposal_id = make_proposal(&env, &client, &proposer);
+
+    let random_holder = Address::generate(&env);
+    client.cancel(&random_holder, &proposal_id);
+}
+
+#[test]
+/// Verifies that the guardian can cancel an Active proposal.
+fn test_cancel_by_guardian_when_active() {
+    let (env, client, _, proposer, _) = setup();
+    let proposal_id = make_proposal(&env, &client, &proposer);
+
+    // Get guardian from contract settings
+    let settings = client.get_settings();
+    let guardian = settings.guardian;
+
+    // Move to Active state
+    env.ledger().set_sequence_number(10);
+
+    client.cancel(&guardian, &proposal_id);
+    assert_eq!(client.state(&proposal_id), ProposalState::Cancelled);
+    assert_eq!(count_topic(&env, "ProposalCancelled"), 1);
+}
+
+#[test]
+#[should_panic]
+/// Verifies that the proposer cannot cancel a proposal when it's Active (only allowed when Pending).
+fn test_cancel_by_proposer_when_active_should_fail() {
+    let (env, client, _, proposer, _) = setup();
+    let proposal_id = make_proposal(&env, &client, &proposer);
+
+    // Move to Active state
+    env.ledger().set_sequence_number(10);
+
+    client.cancel(&proposer, &proposal_id);
+}
+
+#[test]
 /// Verifies that votes can be cast even in Pending state, documenting current contract behavior.
 fn test_vote_state_is_pending_not_active() {
     let (env, client, _, proposer, voter) = setup();
