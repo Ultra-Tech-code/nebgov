@@ -2124,7 +2124,7 @@ export class GovernorClient {
     const votingDelay = settings.votingDelay;
     
     // Per requirement: Use QueueTime + voting_delay/10
-    const vetoWindowEndLedger = queueLedger + Math.floor(votingDelay / 10);
+    const vetoWindowEndLedger = executableAtLedger + Math.floor(votingDelay / 10);
     
     // Executable after min_delay
     const executableAtLedger = queueLedger + Math.floor(Number(minDelay) / 10);
