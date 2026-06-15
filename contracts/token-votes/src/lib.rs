@@ -1137,6 +1137,9 @@ mod tests {
         assert_eq!(client.get_past_votes(&user1, &10), 1500);
         assert_eq!(client.get_past_votes(&user1, &15), 1500);
         assert_eq!(client.get_past_votes(&user1, &20), 1300);
+
+        // Advance ledger to 100 so we can query that past ledger.
+        env.ledger().with_mut(|l| l.sequence_number = 100);
         assert_eq!(client.get_past_votes(&user1, &100), 1300);
     }
 
@@ -1364,6 +1367,9 @@ mod tests {
         assert_eq!(client.get_past_votes(&a, &15), 1000); // while delegated to a
         assert_eq!(client.get_past_votes(&a, &25), 0); // after delegation moved to b
         assert_eq!(client.get_past_votes(&b, &25), 1000); // while delegated to b
+
+        // Advance ledger so &35 is not a future ledger.
+        env.ledger().with_mut(|l| l.sequence_number = 35);
         assert_eq!(client.get_past_votes(&b, &35), 0); // after delegation moved to c
     }
 
@@ -1397,6 +1403,8 @@ mod tests {
         assert_eq!(client.get_past_votes(&delegatee, &49), 0);
 
         // One ledger after the checkpoint \u2014 the last checkpoint still applies.
+        // Advance ledger so &51 is not in the future.
+        env.ledger().with_mut(|l| l.sequence_number = 51);
         assert_eq!(client.get_past_votes(&delegatee, &51), 100);
     }
 

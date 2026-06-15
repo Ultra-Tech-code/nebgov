@@ -99,7 +99,7 @@
   ],
   "ledger": {
     "protocol_version": 22,
-    "sequence_number": 50,
+    "sequence_number": 51,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,

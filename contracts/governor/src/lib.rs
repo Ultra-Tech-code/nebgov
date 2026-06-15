@@ -2221,6 +2221,22 @@ mod test {
         }
     }
 
+    /// Minimal timelock stub that satisfies the execution_window / min_delay
+    /// calls made by governor.initialize() without requiring a full timelock setup.
+    #[contract]
+    pub struct MockTimelockContract;
+
+    #[contractimpl]
+    impl MockTimelockContract {
+        pub fn execution_window(_env: Env) -> u64 {
+            86_400
+        }
+
+        pub fn min_delay(_env: Env) -> u64 {
+            3_600
+        }
+    }
+
     /// Shared helper: initialize the governor and return a proposal id using a
     /// dummy target so the existing vote-with-reason tests remain focused on
     /// their specific behaviour without needing a real timelock or target.
@@ -2269,7 +2285,7 @@ mod test {
 
         let admin = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2305,7 +2321,7 @@ mod test {
 
         let admin = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2353,7 +2369,7 @@ mod test {
 
         let admin = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter1 = Address::generate(&env);
         let voter2 = Address::generate(&env);
@@ -2396,7 +2412,7 @@ mod test {
         let client = GovernorContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2455,7 +2471,7 @@ mod test {
         let client = GovernorContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer1 = Address::generate(&env);
         let proposer2 = Address::generate(&env);
         let proposer3 = Address::generate(&env);
@@ -2531,7 +2547,7 @@ mod test {
         let admin = Address::generate(&env);
         let proposer = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
 
         // Set threshold to 100
         let guardian = Address::generate(&env);
@@ -2601,7 +2617,7 @@ mod test {
         let admin = Address::generate(&env);
         let proposer = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
 
         let guardian = Address::generate(&env);
         client.initialize(
@@ -2662,7 +2678,7 @@ mod test {
         let admin = Address::generate(&env);
         let proposer = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
 
         let guardian = Address::generate(&env);
         client.initialize(
@@ -2722,7 +2738,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
 
         client.initialize(
@@ -2756,7 +2772,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
 
         client.initialize(
@@ -2791,7 +2807,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
 
         client.initialize(
@@ -2828,7 +2844,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
 
         client.initialize(
@@ -2861,7 +2877,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2897,7 +2913,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2936,7 +2952,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -2985,7 +3001,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -3029,7 +3045,7 @@ mod test {
 
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -3097,7 +3113,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
 
         // 10% static quorum: supply=10_000_000, so static = 1_000_000.
@@ -3163,7 +3179,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -3213,7 +3229,7 @@ mod test {
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -3249,13 +3265,20 @@ mod test {
         // to prevent expiration mid-lifecycle.
         let env = Env::default();
         env.mock_all_auths();
+
+        // Bump TTL limits before registering so contract instances don't archive during the test.
+        env.ledger().with_mut(|li| {
+            li.min_persistent_entry_ttl = 1_000_000;
+            li.max_entry_ttl = 1_000_000;
+        });
+
         let contract_id = env.register(GovernorContract, ());
         let client = GovernorContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
         let guardian = Address::generate(&env);
         let votes_token_id = env.register(MockVotesContract, ());
-        let timelock = Address::generate(&env);
+        let timelock = env.register(MockTimelockContract, ());
         let proposer = Address::generate(&env);
         let voter = Address::generate(&env);
 
@@ -3269,8 +3292,8 @@ mod test {
             &timelock,
             &voting_delay,
             &long_voting_period,
-            &50,
-            &1000,
+            &0,  // no quorum requirement so single voter can succeed
+            &0,  // no proposal threshold
             &guardian,
             &VoteType::Extended,
             &120_960, // grace period

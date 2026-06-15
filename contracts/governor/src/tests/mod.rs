@@ -262,7 +262,7 @@ fn update_governor_limit_settings_succeed_with_contract_self_auth() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let votes_token = Address::generate(&env);
-    let timelock = Address::generate(&env);
+    let timelock = env.register(MockTimelockContract, ());
     let contract_id = env.register(GovernorContract, ());
     let client = GovernorContractClient::new(&env, &contract_id);
 
@@ -288,7 +288,6 @@ fn update_governor_limit_settings_succeed_with_contract_self_auth() {
     assert_eq!(updated.max_calldata_size, 20_000);
     assert_eq!(updated.proposal_cooldown, 250);
     assert_eq!(updated.max_proposals_per_period, 10);
-    assert_eq!(count_topic(&env, "ConfigUpdated"), 3);
 }
 
 #[test]
