@@ -406,7 +406,7 @@ impl GovernorContract {
 
         let current = env.ledger().sequence();
         let quorum = Self::quorum(env.clone(), proposal.id);
-        let quorum_met = proposal.votes_for >= quorum;
+        let quorum_met = proposal.votes_for + proposal.votes_abstain >= quorum;
         let for_wins = proposal.votes_for > proposal.votes_against;
 
         if current > proposal.end_ledger && !(quorum_met && for_wins) {
@@ -3336,6 +3336,83 @@ mod test {
         let proposal = client.get_proposal(&proposal_id);
         assert_eq!(proposal.votes_for, 1_000_000);
         assert!(!proposal.executed);
+    }
+
+    #[test]
+    fn test_no_expired_event_when_quorum_met_via_abstain() {
+        // Regression test for the bug where emit_proposal_expired_if_needed checked
+        // only votes_for >= quorum (ignoring abstain), diverging from the canonical
+        // quorum formula in state() which counts votes_for + votes_abstain >= quorum.
+        // A proposal that crosses quorum only because of abstain votes must NOT emit
+        // a ProposalExpired event, and state() must return Succeeded.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(GovernorContract, ());
+        let client = GovernorContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let votes_token_id = env.register(MockVotesContract, ());
+        let timelock = env.register(MockTimelockContract, ());
+        let proposer = Address::generate(&env);
+        let voter_for = Address::generate(&env);
+        let voter_abstain = Address::generate(&env);
+
+        // quorum_numerator = 15 → quorum = 10_000_000 * 15 / 100 = 1_500_000.
+        // MockVotesContract returns 1_000_000 per voter, so votes_for (1M) alone
+        // is below quorum but votes_for + votes_abstain (2M) clears it.
+        client.initialize(
+            &admin,
+            &votes_token_id,
+            &timelock,
+            &0,   // voting_delay
+            &100, // voting_period
+            &15,  // quorum_numerator
+            &0,   // proposal_threshold
+            &guardian,
+            &VoteType::Extended,
+            &100, // proposal_grace_period
+        );
+
+        let proposal_id = propose_dummy(&env, &client, &proposer);
+
+        // Advance into the active voting window.
+        env.ledger().with_mut(|li| li.sequence_number += 1);
+
+        client.cast_vote(&voter_for, &proposal_id, &VoteSupport::For);
+        client.cast_vote(&voter_abstain, &proposal_id, &VoteSupport::Abstain);
+
+        // Advance past the voting period; the proposal should be Succeeded because
+        // votes_for (1M) + votes_abstain (1M) = 2M >= quorum (1.5M) and for > against.
+        env.ledger().with_mut(|li| li.sequence_number += 101);
+        assert_eq!(client.state(&proposal_id), ProposalState::Succeeded);
+
+        // Confirm that no ProposalExpired event was emitted.
+        let events = env.events().all();
+        let has_expired_event = events.iter().any(|(_, topics, _)| {
+            !topics.is_empty() && {
+                let first: Result<soroban_sdk::Symbol, _> =
+                    topics.get(0).unwrap().try_into_val(&env);
+                first.is_ok() && first.unwrap() == Symbol::new(&env, "ProposalExpired")
+            }
+        });
+        assert!(
+            !has_expired_event,
+            "ProposalExpired must not be emitted when quorum is met via abstain votes"
+        );
+
+        // The persistent flag must also remain unset so a future state() call
+        // cannot pick up a stale true value.
+        let flag_set: bool = env.as_contract(&contract_id, || {
+            env.storage()
+                .persistent()
+                .get(&DataKey::ProposalExpiredEmitted(proposal_id))
+                .unwrap_or(false)
+        });
+        assert!(
+            !flag_set,
+            "ProposalExpiredEmitted flag must not be set for a succeeded proposal"
+        );
     }
 }
 
