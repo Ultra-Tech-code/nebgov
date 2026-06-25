@@ -76,6 +76,20 @@ describe("FactoryClient", () => {
     expect(mockSimulate).toHaveBeenCalledTimes(1);
   });
 
+  it("estimates deploy cost", async () => {
+    const response = {
+      result: { retval: xdr.ScVal.scvU64(new xdr.Uint64(15_000_000n)) },
+    };
+    mockSimulate.mockResolvedValue(response);
+    scValToNative.mockReturnValue(15_000_000n);
+
+    const client = new FactoryClient(config);
+    const estimate = await client.estimateDeployCost();
+
+    expect(estimate).toBe(15_000_000n);
+    expect(mockSimulate).toHaveBeenCalledTimes(1);
+  });
+
   it("fetches a governor entry by id", async () => {
     const rawEntry = {
       id: 2n,

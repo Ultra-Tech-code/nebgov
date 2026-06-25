@@ -3,9 +3,12 @@
 #![allow(deprecated)]
 
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contracterror, contracttype, symbol_short, Address,
-    BytesN, Env,
+    contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, Env,
 };
+
+const DEPLOYED_CONTRACT_COUNT: i128 = 3;
+const MIN_CONTRACT_RESERVE_STROOPS: i128 = 5_000_000;
 
 /// Error codes returned by the governor factory.
 #[contracterror]
@@ -15,6 +18,7 @@ pub enum FactoryError {
     InvalidQuorumNumerator = 2,
     InvalidTimelockDelay = 3,
     InvalidVoteType = 4,
+    InsufficientBalance = 5,
 }
 
 #[contracttype]
@@ -44,6 +48,7 @@ pub enum DataKey {
     TimelockWasm,
     TokenVotesWasm,
     Admin,
+    NativeToken,
 }
 
 #[contractclient(name = "TokenVotesClient")]
@@ -109,6 +114,35 @@ impl GovernorFactoryContract {
         env.storage().instance().set(&DataKey::GovernorCount, &0u64);
     }
 
+    /// Configure the network native asset token contract used for deployer
+    /// balance preflight checks.
+    pub fn set_native_token(env: Env, admin: Address, native_token: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("factory not initialized");
+        if admin != stored_admin {
+            panic!("not admin");
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::NativeToken, &native_token);
+    }
+
+    /// Return the configured native asset token contract, if any.
+    pub fn native_token(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::NativeToken)
+    }
+
+    /// Estimate the minimum XLM reserve required to deploy the three-contract
+    /// governor stack.
+    pub fn estimate_deploy_cost(_env: Env) -> i128 {
+        DEPLOYED_CONTRACT_COUNT * MIN_CONTRACT_RESERVE_STROOPS
+    }
+
     /// Deploy a new governor + timelock pair and register it.
     #[allow(clippy::too_many_arguments)]
     pub fn deploy(
@@ -140,6 +174,7 @@ impl GovernorFactoryContract {
         if vote_type > 2 {
             env.panic_with_error(FactoryError::InvalidVoteType);
         }
+        Self::require_sufficient_deploy_balance(&env, &deployer);
 
         let count: u64 = env
             .storage()
@@ -310,6 +345,18 @@ impl GovernorFactoryContract {
             .instance()
             .get(&DataKey::GovernorCount)
             .unwrap_or(0)
+    }
+
+    fn require_sufficient_deploy_balance(env: &Env, deployer: &Address) {
+        let native_token: Option<Address> = env.storage().instance().get(&DataKey::NativeToken);
+        let Some(native_token) = native_token else {
+            return;
+        };
+
+        let balance = token::TokenClient::new(env, &native_token).balance(deployer);
+        if balance < Self::estimate_deploy_cost(env.clone()) {
+            env.panic_with_error(FactoryError::InsufficientBalance);
+        }
     }
 }
 

@@ -44,6 +44,30 @@ export class FactoryClient {
     return raw ? BigInt(scValToNative(raw)) : 0n;
   }
 
+  async estimateDeployCost(): Promise<bigint> {
+    const result = await this.server.simulateTransaction(
+      new TransactionBuilder(
+        await this.server.getAccount(this.contract.contractId()),
+        { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+      )
+        .addOperation(this.contract.call("estimate_deploy_cost"))
+        .setTimeout(30)
+        .build(),
+    );
+
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error("Simulation error estimating deploy cost");
+    }
+
+    const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    if (!raw) {
+      throw new Error("No return value when estimating deploy cost");
+    }
+
+    return BigInt(scValToNative(raw));
+  }
+
   async getGovernor(id: bigint): Promise<GovernorEntry> {
     const result = await this.server.simulateTransaction(
       new TransactionBuilder(

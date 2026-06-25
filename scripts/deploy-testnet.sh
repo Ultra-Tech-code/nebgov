@@ -158,8 +158,9 @@ deploy_contract "$WASM_DIR/sorogov_governor_factory.wasm" "FACTORY_ADDRESS"
 # Initialize contracts (idempotent — each checks storage internally)
 # ====================================================================
 
-# Resolve the SEP-41 token address. If not provided, use native XLM.
-SEP41_TOKEN="${SEP41_TOKEN_ADDRESS:-CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC}"
+# Resolve token addresses. If no governance token is provided, use native XLM.
+NATIVE_TOKEN="${NATIVE_TOKEN_ADDRESS:-CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC}"
+SEP41_TOKEN="${SEP41_TOKEN_ADDRESS:-$NATIVE_TOKEN}"
 
 # -- Initialize token-votes ------------------------------------------
 info "Initializing token-votes ..."
@@ -263,6 +264,17 @@ stellar contract invoke \
   2>/dev/null && ok "factory initialized" \
   || warn "factory already initialized (or init failed — check manually)"
 
+info "Configuring factory native token preflight ..."
+stellar contract invoke \
+  --id "$FACTORY_ADDRESS" \
+  --source "$IDENTITY" \
+  --network "$NETWORK" \
+  -- set_native_token \
+  --admin "$DEPLOYER_ADDR" \
+  --native_token "$NATIVE_TOKEN" \
+  2>/dev/null && ok "factory native token configured" \
+  || warn "factory native token already configured (or update failed — check manually)"
+
 # ====================================================================
 # Summary
 # ====================================================================
@@ -272,6 +284,7 @@ info "  NebGov testnet deployment complete"
 info "============================================================"
 info "  Deployer ............. $DEPLOYER_ADDR"
 info "  Token-Votes .......... $TOKEN_VOTES_ADDRESS"
+info "  Native Token ......... $NATIVE_TOKEN"
 info "  Timelock ............. $TIMELOCK_ADDRESS"
 info "  Timelock Min Delay ... $TIMELOCK_DELAY seconds"
 info "  Timelock Exec Window . $TIMELOCK_WINDOW seconds"
