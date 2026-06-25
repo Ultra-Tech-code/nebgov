@@ -1771,3 +1771,182 @@ fn test_cancel_queued_veto_window_uses_correct_conversion_factor() {
         "proposal must be Cancelled: guardian is still within the veto window at ledger +11"
     );
 }
+
+// ---------------------------------------------------------------------------
+// cast_vote / cast_vote_with_reason Active-state guard tests (issue #603)
+//
+// Before this fix, both functions accepted votes at any ledger, which meant
+// a post-deadline voter could flip a Defeated proposal to Succeeded and then
+// queue it for execution.  The guard now rejects any vote cast outside the
+// [start_ledger, end_ledger] window.
+// ---------------------------------------------------------------------------
+
+/// Helper: deploy governor backed by ConfigurableVotesContract (no real token
+/// needed) and submit a single proposal.  Returns (governor_id, proposal_id,
+/// start_ledger, end_ledger).
+fn setup_governor_with_proposal(
+    env: &Env,
+) -> (Address, Address, u64, u32, u32) {
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(env);
+    let guardian = Address::generate(env);
+    let proposer = Address::generate(env);
+    let voter = Address::generate(env);
+
+    let votes_id = env.register(ConfigurableVotesContract, ());
+    let votes_client = ConfigurableVotesContractClient::new(env, &votes_id);
+    votes_client.set_votes(&voter, &1_000_000);
+    votes_client.set_votes(&proposer, &1_000_000);
+    votes_client.set_total_supply(&10_000_000);
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+    let timelock_client = TimelockContractClient::new(env, &timelock_id);
+    let governor_client = GovernorContractClient::new(env, &governor_id);
+
+    timelock_client.initialize(&admin, &governor_id, &0, &1_209_600);
+    // voting_delay = 10, voting_period = 20 → start=10, end=30
+    governor_client.initialize(
+        &admin,
+        &votes_id,
+        &timelock_id,
+        &10,
+        &20,
+        &0,
+        &0,
+        &guardian,
+        &VoteType::Extended,
+        &120_960,
+    );
+
+    let mock_target_id = env.register(MockTarget, ());
+    let proposal_id = propose_exec_gov(env, &governor_client, &proposer, &mock_target_id, b"issue-603");
+
+    let proposal = governor_client.get_proposal(&proposal_id);
+    let start_ledger = proposal.start_ledger;
+    let end_ledger = proposal.end_ledger;
+
+    (governor_id, votes_id, proposal_id, start_ledger, end_ledger)
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_before_start_ledger_is_rejected() {
+    let env = Env::default();
+    let (governor_id, _votes_id, proposal_id, start_ledger, _end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let voter = Address::generate(&env);
+
+    // Ledger is still before start — proposal is Pending.
+    assert!(env.ledger().sequence() < start_ledger);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Pending);
+
+    // Must panic with ProposalNotActive (error code 31).
+    governor_client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_after_end_ledger_is_rejected() {
+    let env = Env::default();
+    let (governor_id, _votes_id, proposal_id, _start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let voter = Address::generate(&env);
+
+    // Advance one ledger past end — voting period has closed.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
+
+    // Must panic with ProposalNotActive (error code 31).
+    governor_client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_with_reason_after_end_ledger_is_rejected() {
+    let env = Env::default();
+    let (governor_id, _votes_id, proposal_id, _start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let voter = Address::generate(&env);
+
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
+
+    let reason = soroban_sdk::String::from_str(&env, "late vote attempt");
+    // Must panic with ProposalNotActive (error code 31).
+    governor_client.cast_vote_with_reason(&voter, &proposal_id, &VoteSupport::For, &reason);
+}
+
+/// Regression test for the exact attack described in issue #603:
+/// a post-deadline vote must not be able to flip a Defeated proposal to Succeeded.
+#[test]
+fn test_post_deadline_vote_cannot_flip_defeated_proposal() {
+    let env = Env::default();
+    let (governor_id, votes_id, proposal_id, start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let votes_client = ConfigurableVotesContractClient::new(&env, &votes_id);
+
+    let for_voter = Address::generate(&env);
+    let against_voter = Address::generate(&env);
+    votes_client.set_votes(&against_voter, &1_000_000);
+
+    // Cast "against" vote during Active window → proposal ends Defeated.
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger + 1);
+    governor_client.cast_vote(&against_voter, &proposal_id, &VoteSupport::Against);
+
+    // Advance past end_ledger.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Defeated,
+        "proposal must be Defeated after voting period"
+    );
+
+    // Attacker tries to flip the outcome by voting after deadline.
+    // try_cast_vote returns Err when the contract panics — no std required.
+    let flip_result =
+        governor_client.try_cast_vote(&for_voter, &proposal_id, &VoteSupport::For);
+    assert!(
+        flip_result.is_err(),
+        "post-deadline vote must be rejected by the contract"
+    );
+
+    // Verify the proposal is still Defeated and tallies are unchanged.
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Defeated,
+        "proposal must remain Defeated after rejected post-deadline vote"
+    );
+
+    let (votes_for, _votes_against, _) = governor_client.proposal_votes(&proposal_id);
+    assert_eq!(votes_for, 0, "votes_for must not have increased");
+}
+
+#[test]
+fn test_cast_vote_succeeds_at_start_and_end_ledger_boundaries() {
+    let env = Env::default();
+    let (governor_id, votes_id, proposal_id, start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let votes_client = ConfigurableVotesContractClient::new(&env, &votes_id);
+
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+    votes_client.set_votes(&voter_a, &1_000_000);
+    votes_client.set_votes(&voter_b, &1_000_000);
+
+    // Vote at exactly start_ledger — must succeed.
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger);
+    governor_client.cast_vote(&voter_a, &proposal_id, &VoteSupport::For);
+
+    // Vote at exactly end_ledger — must succeed.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger);
+    governor_client.cast_vote(&voter_b, &proposal_id, &VoteSupport::Against);
+
+    // Both receipts recorded.
+    assert!(governor_client.get_receipt(&proposal_id, &voter_a).has_voted);
+    assert!(governor_client.get_receipt(&proposal_id, &voter_b).has_voted);
+}
