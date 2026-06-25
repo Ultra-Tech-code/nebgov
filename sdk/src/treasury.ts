@@ -297,6 +297,27 @@ export class TreasuryClient {
   }
 
   /**
+   * Get the remaining spending budget for a token in the current period.
+   *
+   * Returns the difference between the spending cap's maxAmount and what has
+   * been spent so far in the current period. If no cap is set, returns null.
+   * If spending has exceeded the cap, returns 0n.
+   *
+   * @param token - Strkey address of the token to check
+   * @returns Remaining budget in the current period, or null if no cap is set
+   */
+  async getSpendingRemaining(token: string): Promise<bigint | null> {
+    return this.retry(async () => {
+      const cap = await this.getSpendingCap(token);
+      if (!cap) return null;
+
+      const spent = await this.getSpentThisPeriod(token);
+      const remaining = cap.maxAmount - spent;
+      return remaining > 0n ? remaining : 0n;
+    });
+  }
+
+  /**
    * Get current treasury owner addresses from on-chain state.
    */
   async getOwners(): Promise<string[]> {

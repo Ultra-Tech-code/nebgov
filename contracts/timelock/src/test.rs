@@ -937,3 +937,22 @@ fn test_update_execution_window_unauthorized() {
     // Should panic when unauthorized user tries to update
     client.update_execution_window(&unauthorized, &2000);
 }
+
+#[test]
+#[should_panic(expected = "already initialized")]
+/// Test that initialize() cannot be called twice.
+fn test_initialize_guard_prevents_reinitialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(TimelockContract, ());
+    let client = TimelockContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let governor = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    client.initialize(&admin, &governor, &100, &1000);
+
+    // Second initialize attempt should panic
+    client.initialize(&attacker, &attacker, &0, &u64::MAX);
+}
