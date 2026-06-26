@@ -192,6 +192,6 @@ describe("governor event indexing (integration)", () => {
       "SELECT new_wasm_hash FROM governor_upgrades WHERE ledger = 203 ORDER BY id DESC LIMIT 1",
     );
     expect(rows.rows.length).toBe(1);
-    expect(rows.rows[0].new_wasm_hash).toBe("fffefdj");
+    expect(rows.rows[0].new_wasm_hash).toBe("fffefd");
   });
 });

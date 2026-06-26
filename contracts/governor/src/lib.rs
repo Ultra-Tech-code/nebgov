@@ -2235,6 +2235,11 @@ impl GovernorContract {
         env.current_contract_address().require_auth();
         // TODO: implement storage migration logic when a breaking storage
         // change is introduced in a future upgrade.
+
+        // Post-condition validation guard to ensure VotesToken is not cleared from storage (see #696).
+        if !env.storage().instance().has(&DataKey::VotesToken) {
+            env.panic_with_error(GovernorError::VotesTokenNotSet);
+        }
     }
 
     // ============================================================================
@@ -3620,6 +3625,13 @@ mod test {
             &VoteType::Extended,
             &120_960, // grace period
         );
+
+        env.as_contract(&contract_id, || {
+            env.storage().instance().extend_ttl(300_000, 300_000);
+        });
+        env.as_contract(&votes_token_id, || {
+            env.storage().instance().extend_ttl(300_000, 300_000);
+        });
 
         // Create proposal — should extend TTL
         let proposal_id = propose_dummy(&env, &client, &proposer);

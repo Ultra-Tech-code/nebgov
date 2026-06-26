@@ -180,7 +180,7 @@ describe("API Endpoints", () => {
         .mockResolvedValueOnce({ rows: [{ count: 1204 }] })
         .mockResolvedValueOnce({ rows: [{ count: 89 }] })
         .mockResolvedValueOnce({ rows: [{ count: 34 }] })
-        .mockResolvedValueOnce({ rows: [{ total: 5000, count: 10 }] });
+        .mockResolvedValueOnce({ rows: [{ total: 4.2, count: 10 }] });
 
       const statsApp = createApp(mockServer);
       const response = await request(statsApp).get("/stats");
