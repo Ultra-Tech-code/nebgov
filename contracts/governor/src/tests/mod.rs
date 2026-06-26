@@ -201,6 +201,64 @@ fn update_config_rejects_caller_that_is_not_the_contract_address() {
 }
 
 #[test]
+#[should_panic]
+fn set_guardian_rejects_caller_that_is_not_the_contract_address() {
+    let env = Env::default();
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let attacker = Address::generate(&env);
+    let new_guardian = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_guardian",
+            args: (new_guardian.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    client.set_guardian(&new_guardian);
+}
+
+#[test]
+fn set_guardian_succeeds_with_contract_self_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let votes_token = Address::generate(&env);
+    let timelock = env.register(MockTimelockContract, ());
+    let contract_id = env.register(GovernorContract, ());
+    let client = GovernorContractClient::new(&env, &contract_id);
+
+    let initial_guardian = Address::generate(&env);
+    client.initialize(
+        &admin,
+        &votes_token,
+        &timelock,
+        &100u32,
+        &1000u32,
+        &4u32,
+        &0i128,
+        &initial_guardian,
+        &VoteType::Extended,
+        &120_960u32,
+    );
+
+    let events_before = env.events().all().len();
+
+    let new_guardian = Address::generate(&env);
+    client.set_guardian(&new_guardian);
+    let events_after = env.events().all().len();
+
+    let settings = client.get_settings();
+    assert_eq!(settings.guardian, new_guardian);
+    assert_eq!(events_after, events_before + 1);
+}
+
+#[test]
 fn update_config_succeeds_with_contract_self_auth() {
     let env = Env::default();
     env.mock_all_auths();

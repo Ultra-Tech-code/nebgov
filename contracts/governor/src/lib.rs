@@ -367,7 +367,10 @@ impl GovernorContract {
         // repeated cross-contract calls. Falls back to live calls for pre-migration
         // contracts that don't have the cache entries yet.
         let cached_delay: Option<u64> = env.storage().instance().get(&DataKey::CachedTimelockDelay);
-        let cached_window: Option<u64> = env.storage().instance().get(&DataKey::CachedExecutionWindow);
+        let cached_window: Option<u64> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CachedExecutionWindow);
         let timelock_delay_ledgers: u32 = match (cached_delay, cached_window) {
             (Some(d), Some(w)) => ((d + w) / Self::SECONDS_PER_LEDGER) as u32,
             _ => {
@@ -377,7 +380,8 @@ impl GovernorContract {
                     .get(&DataKey::Timelock)
                     .unwrap_or_else(|| env.panic_with_error(GovernorError::TimelockNotSet));
                 let timelock = TimelockClient::new(env, &timelock_addr);
-                ((timelock.min_delay() + timelock.execution_window()) / Self::SECONDS_PER_LEDGER) as u32
+                ((timelock.min_delay() + timelock.execution_window()) / Self::SECONDS_PER_LEDGER)
+                    as u32
             }
         };
 
@@ -388,9 +392,11 @@ impl GovernorContract {
             .saturating_add(timelock_delay_ledgers)
             .saturating_add(1000);
 
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Proposal(proposal_id), ttl_ledgers, ttl_ledgers);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Proposal(proposal_id),
+            ttl_ledgers,
+            ttl_ledgers,
+        );
     }
 
     fn decode_calldata_args(env: &Env, data: &Bytes) -> Vec<Val> {
@@ -1690,6 +1696,30 @@ impl GovernorContract {
         events::emit_config_updated(&env, &old_settings, &new_settings);
     }
 
+    /// Update guardian independently of the full config payload.
+    ///
+    /// Authorization is restricted to the governor's own contract address.
+    /// This means the call must originate from an executed on-chain proposal.
+    pub fn set_guardian(env: Env, new_guardian: Address) {
+        env.current_contract_address().require_auth();
+
+        let old_guardian: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Guardian)
+            .unwrap_or_else(|| env.panic_with_error(GovernorError::GuardianNotSet));
+
+        if old_guardian == new_guardian {
+            return;
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::Guardian, &new_guardian);
+
+        events::emit_guardian_changed(&env, &old_guardian, &new_guardian);
+    }
+
     /// Update the maximum calldata size per proposal action.
     ///
     /// Authorization is restricted to the governor's own contract address.
@@ -1732,10 +1762,9 @@ impl GovernorContract {
         );
 
         let old_settings = Self::get_settings(env.clone());
-        env.storage().instance().set(
-            &DataKey::MaxProposalsPerPeriod,
-            &max_proposals_per_period,
-        );
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxProposalsPerPeriod, &max_proposals_per_period);
         let new_settings = Self::get_settings(env.clone());
 
         events::emit_config_updated(&env, &old_settings, &new_settings);
@@ -1798,11 +1827,7 @@ impl GovernorContract {
         }
 
         // Get voting power
-        let votes_token: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::VotesToken)
-            .unwrap();
+        let votes_token: Address = env.storage().instance().get(&DataKey::VotesToken).unwrap();
         let votes_client = VotesClient::new(&env, &votes_token);
         let voting_power = votes_client.get_votes(&proposer);
 
@@ -2255,20 +2280,19 @@ impl GovernorContract {
     /// total calldata size.
     pub fn estimate_execution_gas(env: Env, proposal_id: u64) -> ExecutionGasEstimate {
         let proposal = Self::must_get_proposal(&env, proposal_id);
-        let action_count = proposal.targets.len() as u32;
+        let action_count = proposal.targets.len();
         let mut calldata_bytes: u32 = 0;
         for i in 0..proposal.calldatas.len() {
             calldata_bytes += proposal.calldatas.get(i).unwrap().len();
         }
-        let estimated_cpu_insns =
-            Self::BASE_CPU_FIXED + (action_count as u64) * Self::BASE_CPU_PER_ACTION
-                + (calldata_bytes as u64) * Self::CPU_PER_CALLDATA_BYTE;
-        let estimated_mem_bytes =
-            Self::BASE_MEM_FIXED + (action_count as u64) * Self::BASE_MEM_PER_ACTION
-                + (calldata_bytes as u64) * Self::MEM_PER_CALLDATA_BYTE;
-        let estimated_fee_stroops =
-            (estimated_cpu_insns as i128) * Self::STROOPS_PER_CPU_INSN
-                + (estimated_mem_bytes as i128) * Self::STROOPS_PER_MEM_BYTE;
+        let estimated_cpu_insns = Self::BASE_CPU_FIXED
+            + (action_count as u64) * Self::BASE_CPU_PER_ACTION
+            + (calldata_bytes as u64) * Self::CPU_PER_CALLDATA_BYTE;
+        let estimated_mem_bytes = Self::BASE_MEM_FIXED
+            + (action_count as u64) * Self::BASE_MEM_PER_ACTION
+            + (calldata_bytes as u64) * Self::MEM_PER_CALLDATA_BYTE;
+        let estimated_fee_stroops = (estimated_cpu_insns as i128) * Self::STROOPS_PER_CPU_INSN
+            + (estimated_mem_bytes as i128) * Self::STROOPS_PER_MEM_BYTE;
         ExecutionGasEstimate {
             proposal_id,
             action_count,
@@ -3382,15 +3406,15 @@ mod test {
         // Initialize with long voting period: 30 days ≈ 259,200 ledgers (at 10 sec blocks)
         let long_voting_period = 259_200u32;
         let voting_delay = 100u32;
-        
+
         client.initialize(
             &admin,
             &votes_token_id,
             &timelock,
             &voting_delay,
             &long_voting_period,
-            &0,  // no quorum requirement so single voter can succeed
-            &0,  // no proposal threshold
+            &0, // no quorum requirement so single voter can succeed
+            &0, // no proposal threshold
             &guardian,
             &VoteType::Extended,
             &120_960, // grace period
@@ -3404,7 +3428,8 @@ mod test {
         assert_eq!(state, ProposalState::Pending);
 
         // Advance to active state (voting_delay ledgers)
-        env.ledger().with_mut(|li| li.sequence_number += voting_delay + 1);
+        env.ledger()
+            .with_mut(|li| li.sequence_number += voting_delay + 1);
         assert_eq!(client.state(&proposal_id), ProposalState::Active);
 
         // Cast vote — should extend TTL again
@@ -3416,14 +3441,16 @@ mod test {
 
         // Advance well into the long voting period (but not past end)
         let mid_voting_period = voting_delay + (long_voting_period / 2);
-        env.ledger().with_mut(|li| li.sequence_number = mid_voting_period);
+        env.ledger()
+            .with_mut(|li| li.sequence_number = mid_voting_period);
 
         // Should still be Active — if TTL wasn't extended, storage might expire
         let state = client.state(&proposal_id);
         assert_eq!(state, ProposalState::Active);
 
         // Advance to end of voting period
-        env.ledger().with_mut(|li| li.sequence_number = voting_delay + long_voting_period + 1);
+        env.ledger()
+            .with_mut(|li| li.sequence_number = voting_delay + long_voting_period + 1);
 
         // Should transition to Succeeded (since quorum was met and votes_for > votes_against)
         let state = client.state(&proposal_id);
