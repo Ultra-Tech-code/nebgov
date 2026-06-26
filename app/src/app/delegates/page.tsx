@@ -20,6 +20,9 @@ function DelegateSkeleton() {
         <Skeleton className="h-4 w-20" />
       </td>
       <td className="py-4 px-4">
+        <Skeleton className="h-4 w-12" />
+      </td>
+      <td className="py-4 px-4">
         <Skeleton className="h-2 w-full" />
       </td>
       <td className="py-4 px-4">
@@ -40,15 +43,21 @@ function formatVotes(votes: bigint): string {
   return num.toLocaleString();
 }
 
+const PAGE_SIZE = 20;
+
 export default function DelegatesPage() {
   const [delegates, setDelegates] = useState<TopDelegate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalDelegated, setTotalDelegated] = useState(0n);
   const [totalSupply, setTotalSupply] = useState(0n);
   const [modalOpen, setModalOpen] = useState(false);
   const [prefillAddress, setPrefillAddress] = useState<string>("");
   const [currentDelegatee, setCurrentDelegatee] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [client, setClient] = useState<VotesClient | null>(null);
   const { publicKey } = useWallet();
 
   useEffect(() => {
@@ -65,24 +74,28 @@ export default function DelegatesPage() {
           throw new Error("Missing required environment variables.");
         }
 
-        const client = new VotesClient({
+        const votesClient = new VotesClient({
           governorAddress,
           timelockAddress,
           votesAddress,
           network,
           ...(rpcUrl && { rpcUrl }),
         });
+        setClient(votesClient);
 
-        const supply = await client.getTotalSupply();
+        const supply = await votesClient.getTotalSupply();
         setTotalSupply(supply);
 
-        const topDelegates = await client.getTopDelegates(20);
-        setDelegates(topDelegates);
-        const total = topDelegates.reduce((sum, d) => sum + d.votingPower, 0n);
+        const result = await votesClient.getTopDelegates({ limit: PAGE_SIZE, offset: 0 });
+        const page = Array.isArray(result) ? result : result.delegates;
+        setDelegates(page);
+        const total = page.reduce((sum, d) => sum + d.votingPower, 0n);
         setTotalDelegated(total);
+        setOffset(PAGE_SIZE);
+        setHasMore(page.length === PAGE_SIZE);
 
         if (publicKey) {
-          setCurrentDelegatee(await client.getDelegatee(publicKey));
+          setCurrentDelegatee(await votesClient.getDelegatee(publicKey));
         } else {
           setCurrentDelegatee(null);
         }
@@ -98,6 +111,22 @@ export default function DelegatesPage() {
 
     fetchDelegates();
   }, [publicKey]);
+
+  async function loadMore() {
+    if (!client || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await client.getTopDelegates({ limit: PAGE_SIZE, offset });
+      const page = Array.isArray(result) ? result : result.delegates;
+      setDelegates((prev) => [...prev, ...page]);
+      setOffset((prev) => prev + PAGE_SIZE);
+      setHasMore(page.length === PAGE_SIZE);
+    } catch (err) {
+      console.error("Error loading more delegates:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   function handleDelegateClick(address: string) {
     setPrefillAddress(address);
@@ -170,6 +199,9 @@ export default function DelegatesPage() {
                 Votes
               </th>
               <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Delegators
+              </th>
+              <th className="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 % of Supply
               </th>
               <th className="py-3 px-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -188,7 +220,7 @@ export default function DelegatesPage() {
 
             {!loading && delegates.length === 0 && !error && (
               <tr>
-                <td colSpan={5} className="py-12 text-center text-gray-500">
+                <td colSpan={6} className="py-12 text-center text-gray-500">
                   No delegates found. Be the first to delegate!
                 </td>
               </tr>
@@ -214,9 +246,12 @@ export default function DelegatesPage() {
                     </td>
                     <td className="py-4 px-4">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm text-gray-900">
+                        <Link
+                          href={`/profile/${delegate.address}`}
+                          className="font-mono text-sm text-indigo-600 hover:text-indigo-800 hover:underline"
+                        >
                           {formatAddress(delegate.address)}
-                        </span>
+                        </Link>
                         {isCurrentUser && (
                           <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded">
                             You
@@ -226,6 +261,9 @@ export default function DelegatesPage() {
                     </td>
                     <td className="py-4 px-4 text-sm font-medium text-gray-900">
                       {formatVotes(delegate.votingPower)}
+                    </td>
+                    <td className="py-4 px-4 text-sm text-gray-600">
+                      {delegate.delegatorCount.toLocaleString()}
                     </td>
                     <td className="py-4 px-4">
                       <div className="flex items-center gap-2">
@@ -257,6 +295,18 @@ export default function DelegatesPage() {
         </table>
       </div>
 
+      {hasMore && (
+        <div className="mt-6 text-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loadingMore ? "Loading..." : "Load More"}
+          </button>
+        </div>
+      )}
+
       <p className="mt-4 text-xs text-gray-400 text-center">
         Estimated data — depends on network conditions
       </p>
@@ -265,6 +315,7 @@ export default function DelegatesPage() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onDelegated={() => window.location.reload()}
+        prefillAddress={prefillAddress}
         currentDelegatee={currentDelegatee}
       />
     </div>

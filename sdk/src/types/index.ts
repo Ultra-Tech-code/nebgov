@@ -370,3 +370,22 @@ export interface VotingHistoryEntry {
   /** Ledger sequence when the vote was cast */
   ledger: number;
 }
+
+/**
+ * Result of a {@link GovernorClient.simulatePropose} dry-run.
+ *
+ * When `ok` is true all resource fields are populated.
+ * When `ok` is false only `error` is set.
+ */
+export interface SimulateResult {
+  /** Whether the simulation succeeded (would not revert on-chain). */
+  ok: boolean;
+  /** Estimated CPU instructions consumed by the propose transaction. */
+  cpuInsns?: bigint;
+  /** Estimated memory bytes consumed by the propose transaction. */
+  memBytes?: bigint;
+  /** Estimated fee in stroops required to submit the transaction. */
+  feeStroops?: bigint;
+  /** Human-readable error message when `ok` is false. */
+  error?: string;
+}

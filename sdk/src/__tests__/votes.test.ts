@@ -384,8 +384,9 @@ describe("VotesClient", () => {
     // Queue scValToNative return values for event decoding phase
     for (const e of events) {
       mockScValToNative
-        .mockReturnValueOnce(e.delegator)                                   // topic[1]
-        .mockReturnValueOnce([e.previousDelegate, e.newDelegatee]);        // value
+        .mockReturnValueOnce("del_chsh")                                    // topic[0] — symbol
+        .mockReturnValueOnce(e.delegator)                                   // topic[1] — delegator
+        .mockReturnValueOnce([e.previousDelegate, e.newDelegatee]);        // value — tuple
     }
   }
 
@@ -404,12 +405,17 @@ describe("VotesClient", () => {
       ]);
 
       // getVotes(delegateX) = 200, getVotes(delegateY) = 50
+      // getBaseVotes(delegateX) and getBaseVotes(delegateY) also called
       mockSimulate
+        .mockResolvedValueOnce({ result: { retval: {} } })
+        .mockResolvedValueOnce({ result: { retval: {} } })
         .mockResolvedValueOnce({ result: { retval: {} } })
         .mockResolvedValueOnce({ result: { retval: {} } });
       mockScValToNative
-        .mockReturnValueOnce(200n)
-        .mockReturnValueOnce(50n);
+        .mockReturnValueOnce(200n)    // getVotes(delegateX)
+        .mockReturnValueOnce(100n)    // getBaseVotes(delegateX)
+        .mockReturnValueOnce(50n)     // getVotes(delegateY)
+        .mockReturnValueOnce(25n);    // getBaseVotes(delegateY)
 
       const top = await client.getTopDelegates(2, 99000);
 
@@ -441,11 +447,17 @@ describe("VotesClient", () => {
       mockSimulate
         .mockResolvedValueOnce({ result: { retval: {} } })
         .mockResolvedValueOnce({ result: { retval: {} } })
+        .mockResolvedValueOnce({ result: { retval: {} } })
+        .mockResolvedValueOnce({ result: { retval: {} } })
+        .mockResolvedValueOnce({ result: { retval: {} } })
         .mockResolvedValueOnce({ result: { retval: {} } });
       mockScValToNative
-        .mockReturnValueOnce(300n)
-        .mockReturnValueOnce(200n)
-        .mockReturnValueOnce(100n);
+        .mockReturnValueOnce(300n)    // getVotes(GDELEGATEX)
+        .mockReturnValueOnce(150n)    // getBaseVotes(GDELEGATEX)
+        .mockReturnValueOnce(200n)    // getVotes(GDELEGATEY)
+        .mockReturnValueOnce(100n)    // getBaseVotes(GDELEGATEY)
+        .mockReturnValueOnce(100n)    // getVotes(GDELEGATEZ)
+        .mockReturnValueOnce(50n);    // getBaseVotes(GDELEGATEZ)
 
       const top = await client.getTopDelegates(1, 99000);
 
@@ -523,10 +535,12 @@ describe("VotesClient", () => {
       // Event 0: delegatorA → delegateX
       // Event 1: delegatorA → delegateY (re-delegation)
       mockScValToNative
-        .mockReturnValueOnce(delegatorA)
-        .mockReturnValueOnce([null, delegateX])
-        .mockReturnValueOnce(delegatorA)
-        .mockReturnValueOnce([delegateX, delegateY]);
+        .mockReturnValueOnce("del_chsh")          // topic[0] — symbol
+        .mockReturnValueOnce(delegatorA)           // topic[1] — delegator
+        .mockReturnValueOnce([null, delegateX])    // value — tuple
+        .mockReturnValueOnce("del_chsh")          // topic[0] — symbol
+        .mockReturnValueOnce(delegatorA)           // topic[1] — delegator
+        .mockReturnValueOnce([delegateX, delegateY]); // value — tuple
 
       // getDelegators(delegateX) should be empty — delegatorA moved to Y
       const delegatorsX = await client.getDelegators(delegateX, 99000);

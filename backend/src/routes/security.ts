@@ -75,4 +75,43 @@ router.post("/alerts/:id/resolve", async (req, res) => {
   }
 });
 
+// Get guardian veto history
+router.get("/guardian-log", async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 20), 100);
+    const offset = (page - 1) * limit;
+
+    const result = await pool.query(
+      `SELECT
+         pc.proposal_id,
+         pc.cancelled_at_ledger,
+         pc.caller AS guardian_address,
+         p.description AS proposal_description
+       FROM proposal_cancellations pc
+       LEFT JOIN proposals p ON pc.proposal_id = p.id
+       ORDER BY pc.cancelled_at_ledger DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+
+    const countResult = await pool.query(
+      "SELECT COUNT(*) AS total FROM proposal_cancellations",
+    );
+    const total = parseInt(countResult.rows[0]?.total ?? "0");
+
+    res.json({
+      data: result.rows,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch guardian veto log" });
+  }
+});
+
 export default router;

@@ -7,13 +7,14 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { GovernorClient, ProposalState, Network } from "@nebgov/sdk";
+import { GovernorClient, VotesClient, ProposalState, Network } from "@nebgov/sdk";
 import { ErrorState } from "../components/ErrorState";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ProposalCardSkeleton } from "../components/ui/ProposalCardSkeleton";
 import { useDebounce } from "../hooks/useDebounce";
 import { getErrorMessage, reportFrontendError } from "../lib/frontend-error";
 import { ProposalStateBadge } from "../components/ProposalStateBadge";
+import { CountdownTimer } from "../components/CountdownTimer";
 
 
 interface ProposalSummary {
@@ -22,6 +23,7 @@ interface ProposalSummary {
   state: ProposalState;
   votesFor: bigint;
   votesAgainst: bigint;
+  startLedger: number;
   endLedger: number;
 }
 
@@ -66,6 +68,7 @@ function ProposalsPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState<number | undefined>();
   const [hasMore, setHasMore] = useState(false);
+  const [totalSupply, setTotalSupply] = useState(0n);
 
   const [searchValue, setSearchValue] = useState(search);
   const debouncedSearch = useDebounce(searchValue, 300);
@@ -158,10 +161,17 @@ function ProposalsPageInner() {
           const response = await fetch(url.toString());
           if (response.ok) {
             const data = await response.json();
+            const mapped = (data.proposals ?? []).map((p: any) => ({
+              ...p,
+              votesAbstain: BigInt(p.votesAbstain ?? 0),
+              votesFor: BigInt(p.votesFor ?? 0),
+              votesAgainst: BigInt(p.votesAgainst ?? 0),
+              id: BigInt(p.id),
+            }));
             if (append) {
-              setProposals((prev) => [...prev, ...data.proposals]);
+              setProposals((prev) => [...prev, ...mapped]);
             } else {
-              setProposals(data.proposals);
+              setProposals(mapped);
             }
             setNextCursor(data.nextCursor);
             setHasMore(data.hasMore || false);
@@ -182,6 +192,17 @@ function ProposalsPageInner() {
         network,
         ...(rpcUrl && { rpcUrl }),
       });
+
+      if (!append) {
+        const votesClient = new VotesClient({
+          governorAddress,
+          timelockAddress,
+          votesAddress,
+          network,
+          ...(rpcUrl && { rpcUrl }),
+        });
+        votesClient.getTotalSupply().then(setTotalSupply).catch(() => {});
+      }
 
       const count = await client.proposalCount();
       if (count === 0n) {
@@ -211,6 +232,7 @@ function ProposalsPageInner() {
           state: r.state!,
           votesFor: r.votes!.votesFor,
           votesAgainst: r.votes!.votesAgainst,
+          startLedger: 0,
           endLedger: 0,
         }));
 
@@ -398,40 +420,57 @@ function ProposalsPageInner() {
       {!loading && !error && filtered.length > 0 && (
         <>
           <div className="space-y-4">
-            {filtered.map((p) => (
-              <Link
-                key={p.id.toString()}
-                href={`/proposal/${p.id}`}
-                className="block bg-white border border-gray-200 rounded-xl p-6 hover:border-indigo-300 hover:shadow-sm transition-all"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-400 mb-1">
-                      Proposal #{p.id.toString()}
-                    </p>
-                    <h2 className="text-lg font-semibold text-gray-900 truncate">
-                      {p.description}
-                    </h2>
-                    <div className="mt-3 flex items-center gap-4 text-sm text-gray-500">
-                      <span>
-                        For: {(Number(p.votesFor) / 1e7).toLocaleString()}
-                      </span>
-                      <span>
-                        Against:{" "}
-                        {(Number(p.votesAgainst) / 1e7).toLocaleString()}
-                      </span>
+            {filtered.map((p) => {
+              const totalVotes = p.votesFor + p.votesAgainst + p.votesAbstain;
+              const participationPct =
+                totalSupply > 0n
+                  ? Number((totalVotes * 10000n) / totalSupply) / 100
+                  : null;
+              return (
+                <Link
+                  key={p.id.toString()}
+                  href={`/proposal/${p.id}`}
+                  className="block bg-white border border-gray-200 rounded-xl p-6 hover:border-indigo-300 hover:shadow-sm transition-all"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-400 mb-1">
+                        Proposal #{p.id.toString()}
+                      </p>
+                      <h2 className="text-lg font-semibold text-gray-900 truncate">
+                        {p.description}
+                      </h2>
+                      <div className="mt-3 flex items-center gap-4 text-sm text-gray-500">
+                        <span>
+                          For: {(Number(p.votesFor) / 1e7).toLocaleString()}
+                        </span>
+                        <span>
+                          Against:{" "}
+                          {(Number(p.votesAgainst) / 1e7).toLocaleString()}
+                        </span>
+                        {participationPct !== null && (
+                          <span
+                            className="text-xs text-gray-400"
+                            title="(for + against + abstain) / total supply"
+                          >
+                            {participationPct.toFixed(1)}% participation
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    {p.state === ProposalState.Active && p.endLedger > 0 && (
+                      <div className="mt-2">
+                        <CountdownTimer
+                          state={p.state}
+                          startLedger={p.startLedger}
+                          endLedger={p.endLedger}
+                        />
+                      </div>
+                    )}
                   </div>
-                  <span
-                    className={`ml-4 shrink-0 px-3 py-1 rounded-full text-xs font-medium ${STATE_COLORS[p.state]}`}
-                    role="status"
-                    aria-label={`Proposal status: ${p.state}`}
-                  >
-                    <ProposalStateBadge state={p.state} />
-                  </span>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
           </div>
 
           {hasMore && (

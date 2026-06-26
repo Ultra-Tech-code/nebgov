@@ -1,4 +1,4 @@
-import { SorobanRpc, nativeToScVal } from "@stellar/stellar-sdk";
+import { SorobanRpc, nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { initDb, pool } from "../db";
 import { processEvents } from "../events";
 
@@ -7,6 +7,13 @@ class FakeServer {
   async getEvents() {
     return { events: this.events };
   }
+}
+
+function myNativeToScVal(value: any): xdr.ScVal {
+  if (Array.isArray(value)) {
+    return xdr.ScVal.scvVec(value.map((v) => myNativeToScVal(v)));
+  }
+  return nativeToScVal(value);
 }
 
 function makeEvent(params: {
@@ -18,9 +25,9 @@ function makeEvent(params: {
 }): SorobanRpc.Api.EventResponse {
   const topic = [
     nativeToScVal(params.type, { type: "symbol" }),
-    ...params.topicArgs.map((a) => nativeToScVal(a)),
+    ...params.topicArgs.map((a) => myNativeToScVal(a)),
   ];
-  const value = nativeToScVal(params.value);
+  const value = myNativeToScVal(params.value);
   return {
     type: "contract",
     ledger: params.ledger,

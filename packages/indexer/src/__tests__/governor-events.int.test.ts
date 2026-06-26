@@ -15,6 +15,7 @@ function makeEvent(params: {
   type: string;
   topicArgs?: any[];
   value: unknown;
+  ledgerClosedAt?: string;
 }): SorobanRpc.Api.EventResponse {
   const topic = [
     nativeToScVal(params.type, { type: "symbol" }),
@@ -24,6 +25,7 @@ function makeEvent(params: {
   return {
     type: "contract",
     ledger: params.ledger,
+    ledgerClosedAt: params.ledgerClosedAt ?? "2026-01-01T00:00:00Z",
     contractId: params.contractId as any,
     topic,
     value,
@@ -54,6 +56,7 @@ describe("governor event indexing (integration)", () => {
       contractId: GOVERNOR,
       ledger: 200,
       type: "ConfigUpdated",
+      ledgerClosedAt: "2026-06-01T12:00:00Z",
       value: {
         old_settings: {
           voting_delay: 1,
@@ -84,14 +87,16 @@ describe("governor event indexing (integration)", () => {
     expect(latest).toBe(200);
 
     const rows = await pool.query(
-      "SELECT ledger, new_settings FROM config_updates ORDER BY id DESC LIMIT 1",
+      "SELECT ledger, old_settings, new_settings, ledger_closed_at FROM config_updates ORDER BY id DESC LIMIT 1",
     );
     expect(rows.rows.length).toBe(1);
     expect(rows.rows[0].ledger).toBe(200);
+    expect(rows.rows[0].old_settings.voting_delay).toBe(1);
     const settings = rows.rows[0].new_settings;
     expect(settings.voting_delay).toBe(2);
     expect(settings.voting_period).toBe(3);
     expect(settings.quorum_numerator).toBe(35);
+    expect(rows.rows[0].ledger_closed_at.toISOString()).toBe("2026-06-01T12:00:00.000Z");
   });
 
   it("indexes GovernorUpgraded event into governor_upgrades", async () => {
@@ -157,9 +162,10 @@ describe("governor event indexing (integration)", () => {
     expect(latest).toBe(202);
 
     const rows = await pool.query(
-      "SELECT new_settings FROM config_updates WHERE ledger = 202 ORDER BY id DESC LIMIT 1",
+      "SELECT old_settings, new_settings FROM config_updates WHERE ledger = 202 ORDER BY id DESC LIMIT 1",
     );
     expect(rows.rows.length).toBe(1);
+    expect(rows.rows[0].old_settings).toBeNull();
     expect(rows.rows[0].new_settings.voting_delay).toBe(3);
   });
 
@@ -186,6 +192,6 @@ describe("governor event indexing (integration)", () => {
       "SELECT new_wasm_hash FROM governor_upgrades WHERE ledger = 203 ORDER BY id DESC LIMIT 1",
     );
     expect(rows.rows.length).toBe(1);
-    expect(rows.rows[0].new_wasm_hash).toBe("fffefdj");
+    expect(rows.rows[0].new_wasm_hash).toBe("fffefd");
   });
 });

@@ -28,7 +28,7 @@ export function VoteReceipt({ support, weight, reason }: Props) {
         Voting power: {(Number(weight) / 1e7).toLocaleString()} NEB
       </p>
       {reason && (
-        <p className="text-sm text-emerald-700 mt-1 italic">"{reason}"</p>
+        <p className="text-sm text-emerald-700 mt-1 italic">&quot;{reason}&quot;</p>
       )}
     </div>
   );

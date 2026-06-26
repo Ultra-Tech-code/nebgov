@@ -60,6 +60,20 @@ function toForm(settings: GovernorSettings): SettingsForm {
   };
 }
 
+const LEDGER_SECONDS = 5;
+
+function ledgerToTimeEstimate(ledgers: number): string {
+  const totalSeconds = ledgers * LEDGER_SECONDS;
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `~${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return `~${hours} hr${remainingMinutes > 0 ? ` ${remainingMinutes} min` : ''}`;
+  const days = Math.floor(hours / 24);
+  return `~${days} day${days > 1 ? 's' : ''} ${hours % 24} hr`;
+}
+
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -256,6 +270,34 @@ export default function SettingsPage() {
             >
               {submitting ? "Verifying calldata..." : "Create proposal"}
             </button>
+          </section>
+
+          <section className="rounded-xl border border-gray-200 bg-white p-5 space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Rate limits
+            </h2>
+            {form && (
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0">
+                  <span className="text-gray-600">Proposal cooldown</span>
+                  <span className="font-mono text-gray-900 tabular-nums">
+                    {ledgerToTimeEstimate(Number(form.proposalCooldown))} ({form.proposalCooldown} ledgers)
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0">
+                  <span className="text-gray-600">Max proposals per period</span>
+                  <span className="font-mono text-gray-900 tabular-nums">
+                    {form.maxProposalsPerPeriod}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-1.5">
+                  <span className="text-gray-600">Period</span>
+                  <span className="font-mono text-gray-900 tabular-nums">
+                    {ledgerToTimeEstimate(Number(form.proposalPeriodDuration))} ({form.proposalPeriodDuration} ledgers)
+                  </span>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="rounded-xl border border-gray-200 bg-white p-5">

@@ -31,9 +31,8 @@ pub struct TxProposal {
     pub approvals: u32,
     pub executed: bool,
     pub cancelled: bool,
-    /// Amount reserved from daily limit (if submitted via submit_with_limit).
-    /// None for regular submit() calls.
-    pub reserved_daily_amount: Option<i128>,
+    /// Amount reserved from daily budget (0 if not submitted via submit_with_limit)
+    pub reserved_amount: i128,
 }
 
 /// A single recipient in a batch transfer.
@@ -206,7 +205,7 @@ impl TreasuryContract {
         data: Bytes,
     ) -> u64 {
         proposer.require_auth();
-        Self::submit_internal(env, proposer, target, fn_name, data)
+        Self::submit_internal(env, proposer, target, fn_name, data, 0)
     }
 
     fn submit_internal(
@@ -215,6 +214,7 @@ impl TreasuryContract {
         target: Address,
         fn_name: Symbol,
         data: Bytes,
+        reserved_amount: i128,
     ) -> u64 {
         Self::require_not_executing(&env);
         Self::require_owner(&env, &proposer);
@@ -232,7 +232,7 @@ impl TreasuryContract {
             approvals: 0,
             executed: false,
             cancelled: false,
-            reserved_daily_amount: None,
+            reserved_amount,
         };
 
         env.storage().persistent().set(&DataKey::Tx(id), &tx);
@@ -264,6 +264,7 @@ impl TreasuryContract {
         env: Env,
         proposer: Address,
         target: Address,
+        fn_name: Symbol,
         data: Bytes,
         amount: i128,
     ) -> u64 {
@@ -318,31 +319,8 @@ impl TreasuryContract {
             .instance()
             .set(&DataKey::DailySpent, &new_daily_total);
 
-        // Create proposal with reserved amount tracking
-        Self::require_not_executing(&env);
-        Self::require_owner(&env, &proposer);
-
-        let count: u64 = env.storage().instance().get(&DataKey::TxCount).unwrap_or(0);
-        let id = count + 1;
-
-        let tx = TxProposal {
-            id,
-            proposer,
-            target,
-            fn_name: symbol_short!("transfer"),
-            data,
-            created_ledger: env.ledger().sequence(),
-            approvals: 0,
-            executed: false,
-            cancelled: false,
-            reserved_daily_amount: Some(amount),
-        };
-
-        env.storage().persistent().set(&DataKey::Tx(id), &tx);
-        env.storage().instance().set(&DataKey::TxCount, &id);
-        env.events().publish((symbol_short!("submit"),), id);
-
-        id
+        // Proceed with standard proposal submission logic, storing the reserved amount.
+        Self::submit_internal(env, proposer, target, fn_name, data, amount)
     }
 
     /// Approve a pending transaction. Executes automatically when threshold reached.
@@ -397,6 +375,8 @@ impl TreasuryContract {
     }
 
     /// Cancel a pending transaction. Owner or governor only.
+    /// Cancel a pending transaction. Owner or governor only.
+    /// If the proposal was submitted via submit_with_limit(), credits back the reserved amount to the daily accumulator.
     pub fn cancel(env: Env, caller: Address, tx_id: u64) {
         Self::require_not_executing(&env);
         caller.require_auth();
@@ -415,15 +395,19 @@ impl TreasuryContract {
             .expect("tx not found");
         assert!(!tx.executed && !tx.cancelled, "invalid state");
         
-        // If this proposal had a reserved daily amount, refund it
-        if let Some(reserved) = tx.reserved_daily_amount {
-            let spent: i128 = env
+        // If this proposal reserved budget, credit it back to the accumulator.
+        if tx.reserved_amount > 0 {
+            let current_daily_spent: i128 = env
                 .storage()
                 .instance()
                 .get(&DataKey::DailySpent)
                 .unwrap_or(0i128);
-            let new_spent = spent.saturating_sub(reserved);
-            env.storage().instance().set(&DataKey::DailySpent, &new_spent);
+            let credited_amount = current_daily_spent
+                .checked_sub(tx.reserved_amount)
+                .unwrap_or(0i128);
+            env.storage()
+                .instance()
+                .set(&DataKey::DailySpent, &credited_amount);
         }
         
         tx.cancelled = true;
@@ -1051,7 +1035,7 @@ mod tests {
 
         // Submit a proposal at the limit.
         let data = Bytes::new(&env);
-        let proposal_id = client.submit_with_limit(&owner, &target, &data, &max_amount);
+        let proposal_id = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &max_amount);
         assert_eq!(proposal_id, 1);
     }
 
@@ -1089,7 +1073,7 @@ mod tests {
         });
 
         let data = Bytes::new(&env);
-        let proposal_id = client.submit_with_limit(&owner, &target, &data, &proposed_amount);
+        let proposal_id = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &proposed_amount);
         assert_eq!(proposal_id, 1);
     }
 
@@ -1133,15 +1117,15 @@ mod tests {
         let data = Bytes::new(&env);
 
         // First proposal: 800 (daily total = 800)
-        let id1 = client.submit_with_limit(&owner, &target, &data, &proposal_amount);
+        let id1 = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &proposal_amount);
         assert_eq!(id1, 1);
 
         // Second proposal: 800 (daily total = 1600)
-        let id2 = client.submit_with_limit(&owner, &target, &data, &proposal_amount);
+        let id2 = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &proposal_amount);
         assert_eq!(id2, 2);
 
         // Third proposal: 800 (daily total = 2400)
-        let id3 = client.submit_with_limit(&owner, &target, &data, &proposal_amount);
+        let id3 = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &proposal_amount);
         assert_eq!(id3, 3);
 
         // Verify accumulator is at 2400.
@@ -1208,7 +1192,7 @@ mod tests {
             .with_mut(|l| l.timestamp = initial_time + 86401);
 
         // Now submit: window has reset, so accumulator is 0, and 1 token should fit.
-        let proposal_id = client.submit_with_limit(&owner, &target, &data, &test_amount);
+        let proposal_id = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &test_amount);
         let proposal_count_after = client.tx_count();
 
         assert_eq!(proposal_count_after, proposal_count_before + 1);
@@ -1253,7 +1237,7 @@ mod tests {
         let tx_count_before = client.tx_count();
 
         // This must panic.
-        client.submit_with_limit(&owner, &target, &data, &proposed_amount);
+        client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &proposed_amount);
 
         // Verify state is unchanged.
         let tx_count_after = client.tx_count();
@@ -1304,7 +1288,7 @@ mod tests {
 
         // Try to submit 200 when only 100 is available in the daily budget.
         // This should panic and leave state unchanged.
-        client.submit_with_limit(&owner, &target, &data, &200i128);
+        client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &200i128);
 
         let tx_count_after = client.tx_count();
         assert_eq!(tx_count_after, tx_count_before);
@@ -1342,7 +1326,7 @@ mod tests {
             env.storage().instance().set(&DataKey::DailySpent, &0i128);
         });
 
-        let id = client.submit_with_limit(&owner, &target, &data, &0i128);
+        let id = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &0i128);
         assert_eq!(id, 1);
 
         // Verify accumulator is still 0.
@@ -1390,7 +1374,7 @@ mod tests {
         });
 
         // First transfer at the limit succeeds.
-        let id1 = client.submit_with_limit(&owner, &target, &data, &limit);
+        let id1 = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &limit);
         assert_eq!(id1, 1);
 
         // Accumulator is now at `limit`.
@@ -1442,7 +1426,7 @@ mod tests {
         });
 
         // Submit a transfer of 50 — accumulator is i128::MAX - 50, which is valid.
-        let id = client.submit_with_limit(&owner, &target, &data, &50i128);
+        let id = client.submit_with_limit(&owner, &target, &symbol_short!("transfer"), &data, &50i128);
         assert_eq!(id, 1);
 
         let daily_spent: i128 = env.as_contract(&treasury_id, || {

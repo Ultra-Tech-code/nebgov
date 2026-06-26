@@ -8,7 +8,6 @@ export function ShareButton({ url, title }: { url: string; title?: string }) {
       const nav = typeof navigator !== "undefined" ? navigator : null;
 
       if (nav && "share" in nav) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (nav as any).share({ url, title });
         return;
       }

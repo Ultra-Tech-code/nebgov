@@ -1,0 +1,100 @@
+name: Deploy Testnet
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deploy:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    environment: testnet
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deploy-
+            ${{ runner.os }}-cargo-
+
+      - name: Install System Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libudev-dev pkg-config
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Write deployer identity
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+        run: |
+          stellar keys add deployer --secret-key "$STELLAR_SECRET_KEY"
+
+      - name: Run deploy-testnet.sh
+        id: deploy
+        env:
+          STELLAR_IDENTITY: deployer
+          STELLAR_NETWORK: testnet
+          SEP41_TOKEN_ADDRESS: ${{ vars.SEP41_TOKEN_ADDRESS }}
+          GUARDIAN_ADDRESS: ${{ vars.GUARDIAN_ADDRESS }}
+          VOTE_TYPE: ${{ vars.VOTE_TYPE || 'Extended' }}
+          VOTING_DELAY: ${{ vars.VOTING_DELAY || '60' }}
+          VOTING_PERIOD: ${{ vars.VOTING_PERIOD || '17280' }}
+          QUORUM_NUMERATOR: ${{ vars.QUORUM_NUMERATOR || '4' }}
+          PROPOSAL_THRESHOLD: ${{ vars.PROPOSAL_THRESHOLD || '100000000' }}
+          TIMELOCK_MIN_DELAY: ${{ vars.TIMELOCK_MIN_DELAY || '3600' }}
+          TIMELOCK_EXECUTION_WINDOW: ${{ vars.TIMELOCK_EXECUTION_WINDOW || '86400' }}
+        run: |
+          chmod +x scripts/deploy-testnet.sh
+          scripts/deploy-testnet.sh | tee /tmp/deploy-output.txt
+          # Extract deployed addresses for the summary step
+          echo "DEPLOY_OUTPUT<<EOF" >> "$GITHUB_ENV"
+          cat /tmp/deploy-output.txt >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Run verify-deployment.sh
+        env:
+          STELLAR_IDENTITY: deployer
+          STELLAR_NETWORK: testnet
+        run: |
+          chmod +x scripts/verify-deployment.sh
+          scripts/verify-deployment.sh
+
+      - name: Post deployment summary to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          SUMMARY="## Testnet Deployment — $TAG
+
+          Deployed by workflow run [\`${{ github.run_id }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) on \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`.
+
+          <details>
+          <summary>Deploy output</summary>
+
+          \`\`\`
+          $DEPLOY_OUTPUT
+          \`\`\`
+
+          </details>"
+
+          gh release edit "$TAG" --notes "$SUMMARY" || \
+          gh release create "$TAG" --title "$TAG" --notes "$SUMMARY"

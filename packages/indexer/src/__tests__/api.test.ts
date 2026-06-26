@@ -43,6 +43,53 @@ describe("API Endpoints", () => {
     app = createApp(mockServer);
   });
 
+  describe("GET /config-history", () => {
+    it("should return paginated config update history", async () => {
+      const mockRows = [
+        {
+          id: 2,
+          ledger: 120,
+          old_settings: { voting_delay: 1 },
+          new_settings: { voting_delay: 2 },
+          ledger_closed_at: "2026-06-01T12:00:00Z",
+          created_at: "2026-06-01T12:00:05Z",
+        },
+        {
+          id: 1,
+          ledger: 100,
+          old_settings: { voting_delay: 0 },
+          new_settings: { voting_delay: 1 },
+          ledger_closed_at: "2026-05-30T09:00:00Z",
+          created_at: "2026-05-30T09:00:03Z",
+        },
+      ];
+
+      (mockPool.query as jest.Mock).mockResolvedValueOnce({
+        rows: mockRows,
+        rowCount: mockRows.length,
+      });
+
+      const response = await request(app).get("/config-history?limit=2&offset=0");
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toEqual(mockRows);
+      expect(response.body.pagination).toEqual({ limit: 2, offset: 0, hasMore: true });
+      expect(mockPool.query).toHaveBeenCalledWith(
+        "SELECT * FROM config_updates ORDER BY ledger DESC, id DESC LIMIT $1 OFFSET $2",
+        [2, 0],
+      );
+    });
+
+    it("should return 500 on database error", async () => {
+      (mockPool.query as jest.Mock).mockRejectedValueOnce(new Error("Database error"));
+
+      const response = await request(app).get("/config-history");
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: "Internal server error" });
+    });
+  });
+
   describe("GET /proposals/:id", () => {
     it("should return a proposal when found", async () => {
       const mockProposal = {
@@ -133,7 +180,7 @@ describe("API Endpoints", () => {
         .mockResolvedValueOnce({ rows: [{ count: 1204 }] })
         .mockResolvedValueOnce({ rows: [{ count: 89 }] })
         .mockResolvedValueOnce({ rows: [{ count: 34 }] })
-        .mockResolvedValueOnce({ rows: [{ total: 5000, count: 10 }] });
+        .mockResolvedValueOnce({ rows: [{ total: 4.2, count: 10 }] });
 
       const statsApp = createApp(mockServer);
       const response = await request(statsApp).get("/stats");

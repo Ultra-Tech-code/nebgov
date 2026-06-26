@@ -335,36 +335,114 @@ export function createApp(server: SorobanRpc.Server): express.Application {
     },
   );
 
-  // GET /proposals?offset=0&limit=20 or ?before=47&limit=20 or ?after=10&limit=20
+  // GET /proposals?offset=0&limit=20
+  //       or ?before=47&limit=20
+  //       or ?after=10&limit=20
+  //       or ?state=Active&current_ledger=5000
+  //       or ?proposer=G...
+  //       or ?page=2&limit=20
   app.get("/proposals", async (req: Request, res: Response): Promise<void> => {
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
     const before = req.query.before ? Number(req.query.before) : undefined;
     const after = req.query.after ? Number(req.query.after) : undefined;
     const offset = Number(req.query.offset ?? 0);
+    const state = req.query.state ? String(req.query.state).trim() : undefined;
+    const proposer = req.query.proposer ? String(req.query.proposer).trim() : undefined;
+    const currentLedger = req.query.current_ledger ? Number(req.query.current_ledger) : undefined;
+    const page = req.query.page ? Math.max(1, Number(req.query.page)) : undefined;
 
     try {
+      const conditions: string[] = [];
+      const params: any[] = [];
+      let paramIndex = 1;
+
+      // Build WHERE clauses from filters
+      if (proposer) {
+        conditions.push(`proposer = $${paramIndex++}`);
+        params.push(proposer);
+      }
+
+      if (state) {
+        switch (state) {
+          case "Active":
+            if (currentLedger) {
+              conditions.push(`start_ledger <= $${paramIndex}`);
+              params.push(currentLedger);
+              paramIndex++;
+              conditions.push(`end_ledger > $${paramIndex}`);
+              params.push(currentLedger);
+              paramIndex++;
+              conditions.push(`executed = false AND cancelled = false`);
+            }
+            break;
+          case "Pending":
+            if (currentLedger) {
+              conditions.push(`start_ledger > $${paramIndex}`);
+              params.push(currentLedger);
+              paramIndex++;
+              conditions.push(`executed = false AND cancelled = false`);
+            }
+            break;
+          case "Succeeded":
+            if (currentLedger) {
+              conditions.push(`end_ledger <= $${paramIndex}`);
+              params.push(currentLedger);
+              paramIndex++;
+              conditions.push(`executed = false AND cancelled = false AND queued = false`);
+              conditions.push(`votes_for > votes_against`);
+            }
+            break;
+          case "Defeated":
+            if (currentLedger) {
+              conditions.push(`end_ledger <= $${paramIndex}`);
+              params.push(currentLedger);
+              paramIndex++;
+              conditions.push(`executed = false AND cancelled = false AND queued = false`);
+              conditions.push(`votes_for <= votes_against`);
+            }
+            break;
+          case "Queued":
+            conditions.push(`queued = true AND executed = false`);
+            break;
+          case "Executed":
+            conditions.push(`executed = true`);
+            break;
+          case "Cancelled":
+            conditions.push(`cancelled = true`);
+            break;
+        }
+      }
+
       let query: string;
-      let params: any[];
       let key: string;
 
-      // Use cursor-based pagination if before/after is provided
-      if (before !== undefined || after !== undefined) {
+      if (page !== undefined) {
+        // Page-based pagination
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        query = `SELECT * FROM proposals ${whereClause} ORDER BY id DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, (page - 1) * limit);
+        key = `proposals:page:${page}:${limit}:${state ?? ""}:${proposer ?? ""}:${currentLedger ?? ""}`;
+      } else if (before !== undefined || after !== undefined) {
+        // Cursor-based pagination
         if (before !== undefined) {
-          // Fetch proposals with id < before
-          query = "SELECT * FROM proposals WHERE id < $1 ORDER BY id DESC LIMIT $2";
-          params = [before, limit];
-          key = `proposals:before:${before}:${limit}`;
+          conditions.push(`id < $${paramIndex++}`);
+          params.push(before);
+          query = `SELECT * FROM proposals ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY id DESC LIMIT $${paramIndex}`;
+          params.push(limit);
+          key = `proposals:before:${before}:${limit}:${state ?? ""}:${proposer ?? ""}:${currentLedger ?? ""}`;
         } else {
-          // Fetch proposals with id > after
-          query = "SELECT * FROM proposals WHERE id > $1 ORDER BY id ASC LIMIT $2";
-          params = [after, limit];
-          key = `proposals:after:${after}:${limit}`;
+          conditions.push(`id > $${paramIndex++}`);
+          params.push(after);
+          query = `SELECT * FROM proposals ${conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY id ASC LIMIT $${paramIndex}`;
+          params.push(limit);
+          key = `proposals:after:${after}:${limit}:${state ?? ""}:${proposer ?? ""}:${currentLedger ?? ""}`;
         }
       } else {
         // Fall back to offset-based pagination for backwards compatibility
-        query = "SELECT * FROM proposals ORDER BY id DESC LIMIT $1 OFFSET $2";
-        params = [limit, offset];
-        key = `proposals:${offset}:${limit}`;
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        query = `SELECT * FROM proposals ${whereClause} ORDER BY id DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+        params.push(limit, offset);
+        key = `proposals:${offset}:${limit}:${state ?? ""}:${proposer ?? ""}:${currentLedger ?? ""}`;
       }
 
       const data = await cached(key, TTL.proposals, async () => {

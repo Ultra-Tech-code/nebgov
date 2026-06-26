@@ -79,6 +79,6 @@ export {
   parseUnpauseEvent,
 } from "./events";
 export * from "./types";
-export { computeQuadraticWeight, hexToBytes32 } from "./utils";
+export { computeQuadraticWeight, hexToBytes32, encodeCalldata, decodeCalldata } from "./utils";
 export { streamEvents } from "./streamEvents";
 export type { IndexerEvent, WsEventType, StreamEventsOptions, UnsubscribeFn } from "./streamEvents";

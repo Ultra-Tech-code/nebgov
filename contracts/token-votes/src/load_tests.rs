@@ -1,5 +1,6 @@
 use crate::{Checkpoint, TokenVotesContract};
-use soroban_sdk::Env;
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::{token, Address, Env};
 
 const SOROBAN_CPU_LIMIT: u64 = 100_000_000;
 
@@ -103,4 +104,73 @@ fn test_binary_search_edge_cases() {
     assert_eq!(before_votes, 0);
     assert_eq!(exact_votes, 777);
     assert_eq!(after_votes, 777);
+}
+
+/// Builds a token-votes contract with `count` checkpoints persisted for a
+/// single account by delegating once per ledger and minting additional tokens
+/// each ledger so each delegation produces a distinct checkpoint.
+///
+/// Returns (contract_client, account_address, max_ledger).
+fn setup_account_with_checkpoints(
+    env: &Env,
+    count: usize,
+) -> (crate::TokenVotesContractClient<'_>, Address, u32) {
+    let admin = Address::generate(env);
+    let sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_addr = sac.address();
+    let sac_client = token::StellarAssetClient::new(env, &token_addr);
+
+    let contract_id = env.register(TokenVotesContract, ());
+    let client = crate::TokenVotesContractClient::new(env, &contract_id);
+    client.initialize(&admin, &token_addr);
+
+    let account = Address::generate(env);
+
+    for i in 1..=count {
+        // Advance ledger so each delegation lands on a unique ledger.
+        env.ledger().with_mut(|li| li.sequence_number = i as u32);
+        // Mint one extra token each round so the checkpoint balance changes.
+        sac_client.mint(&account, &1_i128);
+        client.delegate(&account, &account);
+    }
+
+    (client, account, count as u32)
+}
+
+/// Verify that `get_past_votes` stays within the Soroban compute budget when
+/// called on an account with 1 000 checkpoints (Issue #692).
+///
+/// This exercises the full contract call path — persistent storage read of the
+/// checkpoint vector followed by the O(log n) binary search — rather than
+/// calling `binary_search` in isolation.
+#[test]
+fn test_get_past_votes_1000_checkpoints_within_budget() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, account, max_ledger) = setup_account_with_checkpoints(&env, 1000);
+
+    // Advance the ledger past the last checkpoint so get_past_votes doesn't
+    // panic with "ledger must not exceed current ledger".
+    env.ledger().with_mut(|li| li.sequence_number = max_ledger + 1);
+
+    // Query at a ledger in the middle of the range — worst-case for binary
+    // search is any non-extreme position.
+    let mid_ledger = max_ledger / 2;
+
+    let mut budget = env.cost_estimate().budget();
+    budget.reset_default();
+
+    let votes = client.get_past_votes(&account, &mid_ledger);
+
+    let cpu = budget.cpu_instruction_cost();
+
+    // votes at mid_ledger should be mid_ledger (one token minted per ledger).
+    assert_eq!(votes, mid_ledger as i128);
+
+    assert!(
+        cpu < SOROBAN_CPU_LIMIT,
+        "get_past_votes exceeded Soroban CPU budget for 1000 checkpoints: {} instructions",
+        cpu
+    );
 }

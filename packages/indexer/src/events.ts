@@ -15,6 +15,7 @@ const TOPIC_MAP: Record<string, string> = {
   vote_rsn: "VoteCastWithReason",
   queued: "ProposalQueued",
   executed: "ProposalExecuted",
+  cancelled: "ProposalCancelled",
   delegate: "DelegateChanged",
   del_chsh: "DelegateChanged",
   config_updated: "ConfigUpdated",
@@ -25,6 +26,7 @@ const TOPIC_MAP: Record<string, string> = {
   VoteCastWithReason: "VoteCastWithReason",
   ProposalQueued: "ProposalQueued",
   ProposalExecuted: "ProposalExecuted",
+  ProposalCancelled: "ProposalCancelled",
   DelegateChanged: "DelegateChanged",
   ConfigUpdated: "ConfigUpdated",
   GovernorUpgraded: "GovernorUpgraded",
@@ -144,6 +146,9 @@ export async function processEvents(
               break;
             case "GovernorUpgraded":
               await handleGovernorUpgraded(event, topics);
+              break;
+            case "ProposalCancelled":
+              await handleProposalCancelled(event, topics);
               break;
             default:
               break;
@@ -345,6 +350,18 @@ interface GovernorSettings {
   proposal_period_duration?: number;
 }
 
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value, (_key, current) =>
+    typeof current === "bigint" ? current.toString() : current,
+  );
+}
+
+function parseLedgerClosedAt(value: unknown): Date | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function toNumber(value: unknown): number | null {
   if (typeof value === "number") return value;
   if (typeof value === "bigint") return Number(value);
@@ -409,17 +426,33 @@ async function handleConfigUpdated(
   topics: unknown[],
 ): Promise<void> {
   const data = scValToNative(event.value) as Record<string, unknown>;
+  const oldSettings =
+    data.old_settings === undefined || data.old_settings === null
+      ? null
+      : toGovernorSettings(data.old_settings);
   const newSettings = toGovernorSettings(data.new_settings);
+
+  if ((data.old_settings !== undefined && data.old_settings !== null) && !oldSettings) {
+    console.error("Failed to parse old_settings from ConfigUpdated event");
+    return;
+  }
 
   if (!newSettings) {
     console.error("Failed to parse new_settings from ConfigUpdated event");
     return;
   }
 
+  const ledgerClosedAt = parseLedgerClosedAt((event as any).ledgerClosedAt);
+
   await pool.query(
-    `INSERT INTO config_updates (ledger, new_settings)
-     VALUES ($1, $2)`,
-    [event.ledger, JSON.stringify(newSettings)],
+    `INSERT INTO config_updates (ledger, old_settings, new_settings, ledger_closed_at)
+     VALUES ($1, $2, $3, $4)`,
+    [
+      event.ledger,
+      oldSettings ? stringifyJson(oldSettings) : null,
+      stringifyJson(newSettings),
+      ledgerClosedAt,
+    ],
   );
 }
 
@@ -440,4 +473,47 @@ async function handleGovernorUpgraded(
      VALUES ($1, $2)`,
     [event.ledger, hashStr],
   );
+}
+
+async function handleProposalCancelled(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  const value = scValToNative(event.value);
+
+  let proposalId: string;
+  let cancelledAtLedger: number;
+  let caller: string;
+
+  if (Array.isArray(value)) {
+    // cancel_queued format: (proposal_id: u64, queue_time: u32, current_ledger: u32)
+    proposalId = String(value[0] as bigint);
+    cancelledAtLedger = Number(value[2]);
+    caller = topics.length > 1 ? String(topics[1]) : "unknown";
+  } else if (value && typeof value === "object") {
+    // emit_proposal_cancelled format: ProposalCancelledEvent { proposal_id, caller }
+    const obj = value as Record<string, unknown>;
+    proposalId = String(obj.proposal_id);
+    cancelledAtLedger = event.ledger;
+    caller = String(obj.caller ?? "unknown");
+  } else {
+    return;
+  }
+
+  await pool.query("UPDATE proposals SET cancelled = true WHERE id = $1", [
+    proposalId,
+  ]);
+
+  await pool.query(
+    `INSERT INTO proposal_cancellations (proposal_id, cancelled_at_ledger, caller)
+     VALUES ($1, $2, $3)
+     ON CONFLICT DO NOTHING`,
+    [proposalId, cancelledAtLedger, caller],
+  );
+
+  invalidatePattern("proposals:");
+  broadcast({
+    type: "proposal_cancelled",
+    data: { proposal_id: proposalId, cancelled_at_ledger: cancelledAtLedger, caller },
+  });
 }

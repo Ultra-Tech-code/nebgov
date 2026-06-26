@@ -126,7 +126,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
+    const kit = kitRef.current;
+    if (kit) {
+      try {
+        await kit.disconnect();
+      } catch {
+        // Disconnect may fail if wallet is not connected, but we still clear state
+      }
+    }
     setAddress(null);
     setPublicKey(null);
     setError(null);

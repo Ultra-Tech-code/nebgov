@@ -45,6 +45,7 @@ import {
   reportFrontendError,
 } from "../../../lib/frontend-error";
 import { ProposalDetailSkeleton } from "../../../components/ui/ProposalDetailSkeleton";
+import { CountdownTimer } from "../../../components/CountdownTimer";
 
 interface Props {
   params: { id: string };
@@ -77,6 +78,7 @@ const INITIAL_PROPOSAL = {
   votesFor: 0n,
   votesAgainst: 0n,
   votesAbstain: 0n,
+  startLedger: 0,
   endLedger: 0,
   proposer: "",
   quorum: 0n,
@@ -829,6 +831,14 @@ export default function ProposalDetailClient({ params }: Props) {
             Cast Your Vote
           </h2>
 
+          <div className="mb-4">
+            <CountdownTimer
+              state={proposal.state}
+              startLedger={proposal.startLedger}
+              endLedger={proposal.endLedger}
+            />
+          </div>
+
           {!isConnected ? (
             <div className="bg-indigo-50 dark:bg-slate-900/80 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-5 mb-4">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -837,7 +847,7 @@ export default function ProposalDetailClient({ params }: Props) {
                     Connect your wallet to vote on this proposal
                   </p>
                   <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                    You'll need GOV tokens to participate.
+                    You&apos;ll need GOV tokens to participate.
                   </p>
                 </div>
 

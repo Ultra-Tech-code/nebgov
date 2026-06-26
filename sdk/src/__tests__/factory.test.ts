@@ -6,7 +6,8 @@ var mockGetTransaction = jest.fn();
 
 import { FactoryClient } from "../factory";
 import { xdr } from "@stellar/stellar-sdk";
-import type { FactoryConfig, VoteType } from "../types";
+import type { FactoryConfig } from "../types";
+import { VoteType } from "../types";
 
 jest.mock("@stellar/stellar-sdk", () => {
   const actual = jest.requireActual("@stellar/stellar-sdk");
@@ -73,6 +74,20 @@ describe("FactoryClient", () => {
     const count = await client.getGovernorCount();
 
     expect(count).toBe(3n);
+    expect(mockSimulate).toHaveBeenCalledTimes(1);
+  });
+
+  it("estimates deploy cost", async () => {
+    const response = {
+      result: { retval: xdr.ScVal.scvU64(new xdr.Uint64(15_000_000n)) },
+    };
+    mockSimulate.mockResolvedValue(response);
+    scValToNative.mockReturnValue(15_000_000n);
+
+    const client = new FactoryClient(config);
+    const estimate = await client.estimateDeployCost();
+
+    expect(estimate).toBe(15_000_000n);
     expect(mockSimulate).toHaveBeenCalledTimes(1);
   });
 

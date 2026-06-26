@@ -3,6 +3,9 @@ import path from "path";
 export const INDEXER_MIGRATIONS_TABLE = "pgmigrations_nebgov_indexer";
 
 export async function runIndexerMigrations(): Promise<void> {
+  if (process.env.NODE_ENV === "test") {
+    return;
+  }
   const { runner } = await import("node-pg-migrate");
   const databaseUrl =
     process.env.DATABASE_URL ??

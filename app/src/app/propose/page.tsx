@@ -26,6 +26,7 @@ import {
   hashDescription,
   uploadProposalMetadata,
   type CanProposeResult,
+  type GovernorSettings,
 } from "@nebgov/sdk";
 import {
   calldataArgRowToScVal,
@@ -34,6 +35,7 @@ import {
   type CalldataArgRow,
 } from "../../lib/treasury-calldata";
 import { useWallet } from "../../lib/wallet-context";
+import { CountdownTimer } from "../../components/CountdownTimer";
 
 // Wizard Constants
 const TITLE_MIN = 10;
@@ -79,6 +81,20 @@ function newAction(): WizardAction {
 }
 
 // Helpers
+const LEDGER_SECONDS = 5;
+
+function ledgerToTimeEstimate(ledgers: number): string {
+  const totalSeconds = ledgers * LEDGER_SECONDS;
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `~${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return `~${hours} hr${remainingMinutes > 0 ? ` ${remainingMinutes} min` : ''}`;
+  const days = Math.floor(hours / 24);
+  return `~${days} day${days > 1 ? 's' : ''} ${hours % 24} hr`;
+}
+
 function isReasonableIpfsRef(s: string): boolean {
   if (!s) return true; // Optional
   const v = s.trim().toLowerCase();
@@ -211,6 +227,7 @@ function ProposeWizardInner() {
   const [baseVotes, setBaseVotes] = useState<bigint | null>(null);
   const [delegatee, setDelegatee] = useState<string | null>(null);
   const [delegateBusy, setDelegateBusy] = useState(false);
+  const [settings, setSettings] = useState<GovernorSettings | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
 
   const reviewDataReady =
@@ -314,19 +331,37 @@ function ProposeWizardInner() {
       return;
     }
 
-    const pinataKey = localStorage.getItem("pinata_jwt") || "";
+    // Try to get JWT from sessionStorage (only for current session, cleared on tab close)
+    let pinataKey = sessionStorage.getItem("pinata_jwt") || "";
     if (!pinataKey) {
       const key = prompt("Please enter your Pinata JWT (or API Key):");
       if (!key) return;
-      localStorage.setItem("pinata_jwt", key);
+      // Store only in sessionStorage (cleared on browser tab close) - NEVER in localStorage
+      sessionStorage.setItem("pinata_jwt", key);
+      pinataKey = key;
     }
 
     setIsUploading(true);
     setStepErrors([]);
     try {
-      const { uri, hash } = await uploadProposalMetadata(draft.description, {
-        pinataApiKey: localStorage.getItem("pinata_jwt") || "",
+      // Call the server-side API route that handles Pinata uploads securely
+      const response = await fetch("/api/upload-metadata", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          description: draft.description,
+          pinataJwt: pinataKey,
+        }),
       });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || `Upload failed: ${response.status}`);
+      }
+
+      const { uri, hash } = await response.json();
       setDraft((d) => ({ ...d, ipfsRef: uri, descriptionHash: hash }));
     } catch (err) {
       console.error("IPFS upload failed:", err);
@@ -380,18 +415,20 @@ function ProposeWizardInner() {
     setEstimate(null);
     setEstimateErr(null);
     try {
-      const [v, t, cp, bv, del] = await Promise.all([
+      const [v, t, cp, bv, del, s] = await Promise.all([
         clients.votes.getVotes(publicKey),
         clients.governor.proposalThreshold(),
         clients.governor.canPropose(publicKey),
         clients.votes.getBaseVotes(publicKey),
         clients.votes.getDelegatee(publicKey),
+        clients.governor.getSettings(publicKey).catch(() => null),
       ]);
       setVotes(v);
       setThreshold(t);
       setCanProposeResult(cp);
       setBaseVotes(bv);
       setDelegatee(del);
+      setSettings(s);
 
       const description = buildDescription(
         draft.title,
@@ -726,7 +763,10 @@ function ProposeWizardInner() {
                 <p className="mt-1">{earlyEligibility.reason}</p>
                 {earlyEligibility.cooldownEndsAt && (
                   <p className="mt-2 text-xs font-mono opacity-80">
-                    Cooldown ends at ledger: {earlyEligibility.cooldownEndsAt}
+                    <CountdownTimer
+                      label="Cooldown ends in"
+                      targetLedger={earlyEligibility.cooldownEndsAt}
+                    />
                   </p>
                 )}
                 {earlyEligibility.reason.includes("threshold") && (
@@ -1271,6 +1311,34 @@ function ProposeWizardInner() {
                 </>
               )}
 
+              {settings && (
+                <div className="bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    Rate limits
+                  </p>
+                  <div className="text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Cooldown</span>
+                      <span className="font-mono text-gray-900 dark:text-gray-200">
+                        {ledgerToTimeEstimate(settings.proposalCooldown ?? 100)} ({settings.proposalCooldown ?? 100} ledgers)
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Max per period</span>
+                      <span className="font-mono text-gray-900 dark:text-gray-200">
+                        {settings.maxProposalsPerPeriod ?? 5}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Period</span>
+                      <span className="font-mono text-gray-900 dark:text-gray-200">
+                        {ledgerToTimeEstimate(settings.proposalPeriodDuration ?? 10_000)} ({settings.proposalPeriodDuration ?? 10_000} ledgers)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {canProposeResult && !canProposeResult.allowed && (
                 <div className="flex items-start gap-3 text-red-700 bg-red-50 dark:bg-red-900/20 dark:text-red-400 p-4 rounded-xl text-sm border border-red-100 dark:border-red-900/30">
                   <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -1278,9 +1346,11 @@ function ProposeWizardInner() {
                     <p className="font-semibold">Rate limit active</p>
                     <p className="mt-1">{canProposeResult.reason}</p>
                     {canProposeResult.cooldownEndsAt && (
-                      <p className="mt-2 text-xs opacity-80">
-                        Estimated availability: Ledger{" "}
-                        {canProposeResult.cooldownEndsAt}
+                      <p className="mt-2 text-xs">
+                        <CountdownTimer
+                          label="Estimated availability in"
+                          targetLedger={canProposeResult.cooldownEndsAt}
+                        />
                       </p>
                     )}
                   </div>
