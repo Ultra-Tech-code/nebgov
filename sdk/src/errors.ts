@@ -46,6 +46,7 @@ export enum GovernorErrorCode {
   VotesTokenNotSet = 25,
   PauserNotSet = 26,
   ArithmeticOverflow = 27,
+  ProposalNotActive = 28,
 
   // SDK-level codes
   RpcNotFound = 100,
@@ -98,6 +99,8 @@ const GOVERNOR_MESSAGES: Record<GovernorErrorCode, string> = {
   [GovernorErrorCode.PauserNotSet]: "Pauser address is not configured",
   [GovernorErrorCode.ArithmeticOverflow]:
     "Arithmetic overflow while computing governance state",
+  [GovernorErrorCode.ProposalNotActive]:
+    "Voting has ended for this proposal",
 
   // SDK-level codes
   [GovernorErrorCode.RpcNotFound]: "Proposal not found",

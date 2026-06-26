@@ -230,7 +230,16 @@ export function VotingModal({
       onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to submit vote: ${msg}`);
+      const errStr = msg.toLowerCase();
+      
+      let errorMessage = `Failed to submit vote: ${msg}`;
+      if (errStr.includes("proposalnotactive") || 
+          errStr.includes("proposal not active") ||
+          errStr.includes("error(contract, #28)")) {
+        errorMessage = "Voting has ended for this proposal";
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setSubmitting(false);
     }
