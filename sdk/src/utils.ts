@@ -82,11 +82,25 @@ export async function withRetry<T>(
 }
 
 export function isNetworkError(e: unknown): boolean {
-  if (e instanceof TypeError && e.message.toLowerCase().includes("fetch")) {
-    return true;
+  if (e instanceof Error) {
+    const msg = e.message.toLowerCase();
+    if (
+      msg.includes("fetch") ||
+      msg.includes("network") ||
+      msg.includes("timeout") ||
+      msg.includes("aborted") ||
+      msg.includes("connection refused") ||
+      msg.includes("econnrefused") ||
+      msg.includes("500") ||
+      msg.includes("502") ||
+      msg.includes("503") ||
+      msg.includes("504")
+    ) {
+      return true;
+    }
   }
   const status = (e as any)?.response?.status;
-  if (status >= 500 && status < 600) {
+  if (typeof status === "number" && status >= 500 && status < 600) {
     return true;
   }
   return false;

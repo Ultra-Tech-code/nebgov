@@ -6,7 +6,8 @@ var mockGetTransaction = jest.fn();
 
 import { FactoryClient } from "../factory";
 import { xdr } from "@stellar/stellar-sdk";
-import type { FactoryConfig, VoteType } from "../types";
+import type { FactoryConfig } from "../types";
+import { VoteType } from "../types";
 
 jest.mock("@stellar/stellar-sdk", () => {
   const actual = jest.requireActual("@stellar/stellar-sdk");

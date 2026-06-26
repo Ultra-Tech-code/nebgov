@@ -40,15 +40,21 @@ function formatVotes(votes: bigint): string {
   return num.toLocaleString();
 }
 
+const PAGE_SIZE = 20;
+
 export default function DelegatesPage() {
   const [delegates, setDelegates] = useState<TopDelegate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalDelegated, setTotalDelegated] = useState(0n);
   const [totalSupply, setTotalSupply] = useState(0n);
   const [modalOpen, setModalOpen] = useState(false);
   const [prefillAddress, setPrefillAddress] = useState<string>("");
   const [currentDelegatee, setCurrentDelegatee] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [client, setClient] = useState<VotesClient | null>(null);
   const { publicKey } = useWallet();
 
   useEffect(() => {
@@ -65,24 +71,28 @@ export default function DelegatesPage() {
           throw new Error("Missing required environment variables.");
         }
 
-        const client = new VotesClient({
+        const votesClient = new VotesClient({
           governorAddress,
           timelockAddress,
           votesAddress,
           network,
           ...(rpcUrl && { rpcUrl }),
         });
+        setClient(votesClient);
 
-        const supply = await client.getTotalSupply();
+        const supply = await votesClient.getTotalSupply();
         setTotalSupply(supply);
 
-        const topDelegates = await client.getTopDelegates(20);
-        setDelegates(topDelegates);
-        const total = topDelegates.reduce((sum, d) => sum + d.votingPower, 0n);
+        const result = await votesClient.getTopDelegates({ limit: PAGE_SIZE, offset: 0 });
+        const page = Array.isArray(result) ? result : result.delegates;
+        setDelegates(page);
+        const total = page.reduce((sum, d) => sum + d.votingPower, 0n);
         setTotalDelegated(total);
+        setOffset(PAGE_SIZE);
+        setHasMore(page.length === PAGE_SIZE);
 
         if (publicKey) {
-          setCurrentDelegatee(await client.getDelegatee(publicKey));
+          setCurrentDelegatee(await votesClient.getDelegatee(publicKey));
         } else {
           setCurrentDelegatee(null);
         }
@@ -98,6 +108,22 @@ export default function DelegatesPage() {
 
     fetchDelegates();
   }, [publicKey]);
+
+  async function loadMore() {
+    if (!client || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await client.getTopDelegates({ limit: PAGE_SIZE, offset });
+      const page = Array.isArray(result) ? result : result.delegates;
+      setDelegates((prev) => [...prev, ...page]);
+      setOffset((prev) => prev + PAGE_SIZE);
+      setHasMore(page.length === PAGE_SIZE);
+    } catch (err) {
+      console.error("Error loading more delegates:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   function handleDelegateClick(address: string) {
     setPrefillAddress(address);
@@ -256,6 +282,18 @@ export default function DelegatesPage() {
           </tbody>
         </table>
       </div>
+
+      {hasMore && (
+        <div className="mt-6 text-center">
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loadingMore ? "Loading..." : "Load More"}
+          </button>
+        </div>
+      )}
 
       <p className="mt-4 text-xs text-gray-400 text-center">
         Estimated data — depends on network conditions
