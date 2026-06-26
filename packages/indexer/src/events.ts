@@ -345,6 +345,18 @@ interface GovernorSettings {
   proposal_period_duration?: number;
 }
 
+function stringifyJson(value: unknown): string {
+  return JSON.stringify(value, (_key, current) =>
+    typeof current === "bigint" ? current.toString() : current,
+  );
+}
+
+function parseLedgerClosedAt(value: unknown): Date | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function toNumber(value: unknown): number | null {
   if (typeof value === "number") return value;
   if (typeof value === "bigint") return Number(value);
@@ -409,17 +421,33 @@ async function handleConfigUpdated(
   topics: unknown[],
 ): Promise<void> {
   const data = scValToNative(event.value) as Record<string, unknown>;
+  const oldSettings =
+    data.old_settings === undefined || data.old_settings === null
+      ? null
+      : toGovernorSettings(data.old_settings);
   const newSettings = toGovernorSettings(data.new_settings);
+
+  if ((data.old_settings !== undefined && data.old_settings !== null) && !oldSettings) {
+    console.error("Failed to parse old_settings from ConfigUpdated event");
+    return;
+  }
 
   if (!newSettings) {
     console.error("Failed to parse new_settings from ConfigUpdated event");
     return;
   }
 
+  const ledgerClosedAt = parseLedgerClosedAt((event as any).ledgerClosedAt);
+
   await pool.query(
-    `INSERT INTO config_updates (ledger, new_settings)
-     VALUES ($1, $2)`,
-    [event.ledger, JSON.stringify(newSettings)],
+    `INSERT INTO config_updates (ledger, old_settings, new_settings, ledger_closed_at)
+     VALUES ($1, $2, $3, $4)`,
+    [
+      event.ledger,
+      oldSettings ? stringifyJson(oldSettings) : null,
+      stringifyJson(newSettings),
+      ledgerClosedAt,
+    ],
   );
 }
 
