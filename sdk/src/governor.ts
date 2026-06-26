@@ -1322,9 +1322,7 @@ export class GovernorClient {
             topics: [["VoteCast", "vote"], [voter]],
           },
         ],
-        pagination: {
-          limit: limit * 2, // Fetch extra to filter for relevant events
-        },
+        limit: limit * 2, // Fetch extra to filter for relevant events
       });
 
       const history: VotingHistoryEntry[] = [];
@@ -1336,12 +1334,9 @@ export class GovernorClient {
         if (String(voterTopic) !== voter) continue;
 
         // Parse event data
-        const data = event.value?.body?.val;
-        if (!data) continue;
-
-        const native = scValToNative(data) as Record<string, unknown>;
+        const native = scValToNative(event.value) as Record<string, unknown>;
         const proposalId = toBigInt(native.proposal_id ?? native.proposalId);
-        const supportRaw = native.support ?? native.support;
+        const supportRaw = native.support;
         const support = typeof supportRaw === "number" 
           ? supportRaw 
           : Number(supportRaw);
@@ -2169,6 +2164,72 @@ export class GovernorClient {
     }
 
     return results;
+  }
+
+  /**
+   * List proposals using on-chain pagination when available.
+   *
+   * For older governor deployments that do not expose `get_proposal_list`,
+   * this falls back to the legacy `proposal_count` + `get_proposal` strategy.
+   */
+  async listProposals(offset = 0, limit = 20): Promise<Proposal[]> {
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(0, Math.floor(limit));
+
+    if (safeLimit === 0) {
+      return [];
+    }
+
+    return this.retry(async () => {
+      try {
+        const result = await this.server.simulateTransaction(
+          new TransactionBuilder(
+            await this.server.getAccount(this.readAccount()),
+            { fee: BASE_FEE, networkPassphrase: this.networkPassphrase },
+          )
+            .addOperation(
+              this.contract.call(
+                "get_proposal_list",
+                nativeToScVal(BigInt(safeOffset), { type: "u64" }),
+                nativeToScVal(BigInt(safeLimit), { type: "u64" }),
+              ),
+            )
+            .setTimeout(30)
+            .build(),
+        );
+
+        if (SorobanRpc.Api.isSimulationError(result)) {
+          throw new Error(result.error);
+        }
+
+        const raw = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+          .result?.retval;
+        if (!raw) {
+          return [];
+        }
+
+        return scValToNative(raw) as Proposal[];
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes("get_proposal_list")) {
+          throw error;
+        }
+
+        const total = Number(await this.proposalCount());
+        if (safeOffset >= total) {
+          return [];
+        }
+
+        const endExclusive = Math.min(total, safeOffset + safeLimit);
+        const ids: bigint[] = [];
+        for (let i = safeOffset; i < endExclusive; i++) {
+          ids.push(BigInt(i + 1));
+        }
+
+        const proposals = await Promise.all(ids.map((id) => this.getProposal(id)));
+        return proposals;
+      }
+    }, this.isNetworkError.bind(this));
   }
 
   /**
