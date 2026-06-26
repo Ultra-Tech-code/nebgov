@@ -247,6 +247,15 @@ export default function ProposalDetailClient({ params }: Props) {
   }, [loadProposal]);
 
   useEffect(() => {
+    if (proposal.state === ProposalState.Active || proposal.state === ProposalState.Queued) {
+      const interval = setInterval(() => {
+        loadProposal();
+      }, 15_000);
+      return () => clearInterval(interval);
+    }
+  }, [proposal.state, loadProposal]);
+
+  useEffect(() => {
     if (!governorClient) return;
     governorClient
       .getSettings()
