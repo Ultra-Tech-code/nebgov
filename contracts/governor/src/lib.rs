@@ -686,6 +686,20 @@ impl GovernorContract {
         env.storage()
             .persistent()
             .set(&DataKey::LastProposalLedger(proposer.clone()), &current);
+
+        // Prune the previous period's key for this proposer to prevent
+        // unbounded storage growth (Issue #716).  We only need the current
+        // period's count for rate-limiting, so the entry from
+        // `current_period - 1` can be safely removed.
+        if current_period > 0 {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::ProposalsInPeriod(
+                    proposer.clone(),
+                    current_period - 1,
+                ));
+        }
+
         env.storage().persistent().set(
             &DataKey::ProposalsInPeriod(proposer.clone(), current_period),
             &(proposals_in_period + 1),
@@ -3547,6 +3561,72 @@ mod test {
         assert_eq!(GovernorError::ExecutionWindowZero as u32, 29);
         assert_eq!(GovernorError::TooManyCalldataEntries as u32, 30);
         assert_eq!(GovernorError::ProposalNotActive as u32, 31);
+    }
+
+    /// Verify that propose() deletes the previous period's ProposalsInPeriod
+    /// key so stale storage entries don't accumulate (Issue #716).
+    #[test]
+    fn test_proposals_in_period_previous_key_pruned() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(GovernorContract, ());
+        let client = GovernorContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let votes_token_id = env.register(MockVotesContract, ());
+        let timelock = env.register(MockTimelockContract, ());
+        let proposer = Address::generate(&env);
+        let guardian = Address::generate(&env);
+
+        // Initialize at ledger 0 with default period_duration=10_000.
+        client.initialize(
+            &admin,
+            &votes_token_id,
+            &timelock,
+            &0,    // voting_delay
+            &1,    // voting_period (minimal so proposals don't overlap)
+            &0,    // quorum_numerator
+            &0,    // proposal_threshold
+            &guardian,
+            &VoteType::Simple,
+            &120_960,
+        );
+
+        // Override period_duration to 5 so we can advance cheaply.
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::ProposalPeriodDuration, &5u32);
+            // Disable cooldown so a second proposal is immediately allowed.
+            env.storage()
+                .instance()
+                .set(&DataKey::ProposalCooldown, &0u32);
+        });
+
+        // Submit one proposal at ledger 0 (period 0).
+        propose_dummy(&env, &client, &proposer);
+        assert_eq!(client.proposals_in_period(&proposer), 1);
+
+        // Advance to period 1 (ledger 5).  This is a small jump that won't
+        // cause the instance key to be treated as archived.
+        env.ledger().with_mut(|li| li.sequence_number = 5);
+
+        // Submit a proposal in period 1 — this should prune the period-0 key.
+        propose_dummy(&env, &client, &proposer);
+
+        // The period-0 key must have been removed.
+        let period0_key = DataKey::ProposalsInPeriod(proposer.clone(), 0u32);
+        let stale_still_exists = env.as_contract(&contract_id, || {
+            env.storage().persistent().has(&period0_key)
+        });
+        assert!(
+            !stale_still_exists,
+            "stale ProposalsInPeriod key for period 0 should have been pruned"
+        );
+
+        // The current period-1 count must be 1.
+        assert_eq!(client.proposals_in_period(&proposer), 1);
     }
 }
 
