@@ -779,3 +779,70 @@ fn test_liquidity_error_codes_snapshot() {
     assert_eq!(LiquidityError::InsufficientShares as u32, 2);
     assert_eq!(LiquidityError::ImbalancedDeposit as u32, 3);
 }
+
+// ============================================================================
+// TESTS FOR INITIAL DEPOSIT LP TOKEN MINTING (Issue #709)
+// ============================================================================
+
+#[test]
+fn test_initial_deposit_returns_exactly_amount_a_lp_tokens() {
+    let (env, contract_id, governor, provider, _, token_a, token_b) = setup_liquidity();
+    let client = LiquidityContractClient::new(&env, &contract_id);
+
+    setup_pool(&client, &governor, 0, 1, &token_a, &token_b);
+
+    // Initial deposit (total_lp_supply == 0): must return amount_a as LP tokens
+    let (lp_tokens, deposit_b) = client.add_liquidity(&provider, &0, &1, &50_000, &50_000);
+    assert_eq!(lp_tokens, 50_000, "initial deposit must mint exactly amount_a LP tokens");
+    assert_eq!(deposit_b, 50_000);
+
+    let pool = client.get_pool(&0, &1);
+    assert_eq!(pool.reserve_a, 50_000);
+    assert_eq!(pool.reserve_b, 50_000);
+    assert_eq!(pool.total_lp_supply, 50_000);
+}
+
+#[test]
+fn test_second_deposit_returns_proportional_lp_tokens() {
+    let (env, contract_id, governor, provider, _, token_a, token_b) = setup_liquidity();
+    let client = LiquidityContractClient::new(&env, &contract_id);
+    let provider2 = Address::generate(&env);
+
+    setup_pool(&client, &governor, 0, 1, &token_a, &token_b);
+
+    // First deposit: 100_000 A + 100_000 B → total_lp_supply = 100_000
+    let (lp1, _) = client.add_liquidity(&provider, &0, &1, &100_000, &100_000);
+    assert_eq!(lp1, 100_000);
+
+    // Second deposit: 25_000 A → lp = 25_000 * 100_000 / 100_000 = 25_000
+    mint_pair(&env, &token_a, &token_b, &provider2, 25_000, 25_000);
+    let (lp2, _) = client.add_liquidity(&provider2, &0, &1, &25_000, &25_000);
+    assert_eq!(lp2, 25_000, "second deposit must mint proportional LP tokens");
+
+    let pool = client.get_pool(&0, &1);
+    assert_eq!(pool.reserve_a, 125_000);
+    assert_eq!(pool.reserve_b, 125_000);
+}
+
+#[test]
+fn test_total_lp_supply_equals_sum_of_minted_lp_tokens() {
+    let (env, contract_id, governor, provider, _, token_a, token_b) = setup_liquidity();
+    let client = LiquidityContractClient::new(&env, &contract_id);
+    let provider2 = Address::generate(&env);
+
+    setup_pool(&client, &governor, 0, 1, &token_a, &token_b);
+
+    let (lp1, _) = client.add_liquidity(&provider, &0, &1, &100_000, &100_000);
+    mint_pair(&env, &token_a, &token_b, &provider2, 50_000, 50_000);
+    let (lp2, _) = client.add_liquidity(&provider2, &0, &1, &50_000, &50_000);
+
+    let pool = client.get_pool(&0, &1);
+    assert_eq!(
+        pool.total_lp_supply,
+        lp1 + lp2,
+        "pool.total_lp_supply ({}) must equal lp1 ({}) + lp2 ({})",
+        pool.total_lp_supply,
+        lp1,
+        lp2
+    );
+}

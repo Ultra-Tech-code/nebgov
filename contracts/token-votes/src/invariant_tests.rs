@@ -186,5 +186,136 @@ mod tests {
                 env.ledger().with_mut(|l| l.sequence_number += 1);
             }
         }
+
+        /// Invariant 6: Sum of all delegated voting power == total supply at any ledger.
+        ///
+        /// After each state-changing operation (minting, transferring, re-delegation),
+        /// the sum of voting power across all delegatees must equal the total delegated
+        /// supply as reported by get_past_total_supply.
+        #[test]
+        fn total_delegated_voting_power_equals_total_supply(
+            balances in proptest::collection::vec(1i128..1000, 1..10usize)
+        ) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let (contract_id, token_addr) = setup(&env);
+            let client = TokenVotesContractClient::new(&env, &contract_id);
+            let sac_client = token::StellarAssetClient::new(&env, &token_addr);
+            let delegatee = Address::generate(&env);
+
+            for balance in &balances {
+                let delegator = Address::generate(&env);
+                sac_client.mint(&delegator, balance);
+                client.delegate(&delegator, &delegatee);
+                env.ledger().with_mut(|l| l.sequence_number += 1);
+
+                let current_ledger = env.ledger().sequence();
+
+                // Read AccountList to get all accounts with checkpoints
+                let accounts: soroban_sdk::Vec<Address> = env
+                    .as_contract(&contract_id, || {
+                        env.storage()
+                            .persistent()
+                            .get(&DataKey::AccountList)
+                            .unwrap_or(soroban_sdk::Vec::new(&env))
+                    });
+
+                let mut sum_voting_power: i128 = 0;
+                for i in 0..accounts.len() {
+                    let account = accounts.get(i).unwrap();
+                    sum_voting_power += client.get_past_votes(&account, &current_ledger);
+                }
+
+                let total_supply = client.get_past_total_supply(&current_ledger);
+                prop_assert_eq!(
+                    sum_voting_power,
+                    total_supply,
+                    "After minting+delegation: sum of delegatee voting powers ({}) must equal total supply ({}) at ledger {}",
+                    sum_voting_power,
+                    total_supply,
+                    current_ledger
+                );
+            }
+
+            // Test transfer scenario: move tokens between accounts
+            if balances.len() >= 2 {
+                let delegator_a = Address::generate(&env);
+                let delegator_b = Address::generate(&env);
+                let transfer_amount = balances[0];
+
+                sac_client.mint(&delegator_a, &(transfer_amount * 2));
+                sac_client.mint(&delegator_b, &transfer_amount);
+
+                let delegatee_a = Address::generate(&env);
+                let delegatee_b = Address::generate(&env);
+                client.delegate(&delegator_a, &delegatee_a);
+                client.delegate(&delegator_b, &delegatee_b);
+                env.ledger().with_mut(|l| l.sequence_number += 1);
+
+                let token_client = token::TokenClient::new(&env, &token_addr);
+                token_client.transfer(&delegator_a, &delegator_b, &transfer_amount);
+                env.ledger().with_mut(|l| l.sequence_number += 1);
+
+                let current_ledger = env.ledger().sequence();
+
+                let accounts: soroban_sdk::Vec<Address> = env
+                    .as_contract(&contract_id, || {
+                        env.storage()
+                            .persistent()
+                            .get(&DataKey::AccountList)
+                            .unwrap_or(soroban_sdk::Vec::new(&env))
+                    });
+
+                let mut sum_voting_power: i128 = 0;
+                for i in 0..accounts.len() {
+                    let account = accounts.get(i).unwrap();
+                    sum_voting_power += client.get_past_votes(&account, &current_ledger);
+                }
+
+                let total_supply = client.get_past_total_supply(&current_ledger);
+                prop_assert_eq!(
+                    sum_voting_power,
+                    total_supply,
+                    "After transfer: sum of delegatee voting powers must equal total supply"
+                );
+            }
+
+            // Test re-delegation scenario
+            if !balances.is_empty() {
+                let delegator = Address::generate(&env);
+                let new_delegatee = Address::generate(&env);
+
+                sac_client.mint(&delegator, &balances[0]);
+                client.delegate(&delegator, &delegatee);
+                env.ledger().with_mut(|l| l.sequence_number += 1);
+
+                // Re-delegate to a different delegatee
+                client.delegate(&delegator, &new_delegatee);
+                env.ledger().with_mut(|l| l.sequence_number += 1);
+
+                let current_ledger = env.ledger().sequence();
+
+                let accounts: soroban_sdk::Vec<Address> = env
+                    .as_contract(&contract_id, || {
+                        env.storage()
+                            .persistent()
+                            .get(&DataKey::AccountList)
+                            .unwrap_or(soroban_sdk::Vec::new(&env))
+                    });
+
+                let mut sum_voting_power: i128 = 0;
+                for i in 0..accounts.len() {
+                    let account = accounts.get(i).unwrap();
+                    sum_voting_power += client.get_past_votes(&account, &current_ledger);
+                }
+
+                let total_supply = client.get_past_total_supply(&current_ledger);
+                prop_assert_eq!(
+                    sum_voting_power,
+                    total_supply,
+                    "After re-delegation: sum of delegatee voting powers must equal total supply"
+                );
+            }
+        }
     }
 }

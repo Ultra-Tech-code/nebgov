@@ -15,6 +15,7 @@ const TOPIC_MAP: Record<string, string> = {
   vote_rsn: "VoteCastWithReason",
   queued: "ProposalQueued",
   executed: "ProposalExecuted",
+  cancelled: "ProposalCancelled",
   delegate: "DelegateChanged",
   del_chsh: "DelegateChanged",
   config_updated: "ConfigUpdated",
@@ -25,6 +26,7 @@ const TOPIC_MAP: Record<string, string> = {
   VoteCastWithReason: "VoteCastWithReason",
   ProposalQueued: "ProposalQueued",
   ProposalExecuted: "ProposalExecuted",
+  ProposalCancelled: "ProposalCancelled",
   DelegateChanged: "DelegateChanged",
   ConfigUpdated: "ConfigUpdated",
   GovernorUpgraded: "GovernorUpgraded",
@@ -144,6 +146,9 @@ export async function processEvents(
               break;
             case "GovernorUpgraded":
               await handleGovernorUpgraded(event, topics);
+              break;
+            case "ProposalCancelled":
+              await handleProposalCancelled(event, topics);
               break;
             default:
               break;
@@ -468,4 +473,47 @@ async function handleGovernorUpgraded(
      VALUES ($1, $2)`,
     [event.ledger, hashStr],
   );
+}
+
+async function handleProposalCancelled(
+  event: SorobanRpc.Api.EventResponse,
+  topics: unknown[],
+): Promise<void> {
+  const value = scValToNative(event.value);
+
+  let proposalId: string;
+  let cancelledAtLedger: number;
+  let caller: string;
+
+  if (Array.isArray(value)) {
+    // cancel_queued format: (proposal_id: u64, queue_time: u32, current_ledger: u32)
+    proposalId = String(value[0] as bigint);
+    cancelledAtLedger = Number(value[2]);
+    caller = topics.length > 1 ? String(topics[1]) : "unknown";
+  } else if (value && typeof value === "object") {
+    // emit_proposal_cancelled format: ProposalCancelledEvent { proposal_id, caller }
+    const obj = value as Record<string, unknown>;
+    proposalId = String(obj.proposal_id);
+    cancelledAtLedger = event.ledger;
+    caller = String(obj.caller ?? "unknown");
+  } else {
+    return;
+  }
+
+  await pool.query("UPDATE proposals SET cancelled = true WHERE id = $1", [
+    proposalId,
+  ]);
+
+  await pool.query(
+    `INSERT INTO proposal_cancellations (proposal_id, cancelled_at_ledger, caller)
+     VALUES ($1, $2, $3)
+     ON CONFLICT DO NOTHING`,
+    [proposalId, cancelledAtLedger, caller],
+  );
+
+  invalidatePattern("proposals:");
+  broadcast({
+    type: "proposal_cancelled",
+    data: { proposal_id: proposalId, cancelled_at_ledger: cancelledAtLedger, caller },
+  });
 }

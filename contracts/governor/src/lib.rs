@@ -242,6 +242,29 @@ pub struct CanProposeResult {
     pub threshold: i128,
 }
 
+/// Counts of proposals grouped by their current state.
+///
+/// Returned by [`GovernorContract::proposals_count_by_state`] so the UI can
+/// render filter-tab badges without fetching every proposal individually.
+///
+/// # Gas cost
+/// This function iterates every proposal via `state()`, so callers should
+/// budget approximately `O(proposal_count)` read-heavy CPU units. For
+/// governors with thousands of proposals, consider caching the result
+/// off-chain or calling it infrequently.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProposalStateCounts {
+    pub pending: u64,
+    pub active: u64,
+    pub succeeded: u64,
+    pub defeated: u64,
+    pub queued: u64,
+    pub executed: u64,
+    pub cancelled: u64,
+    pub expired: u64,
+}
+
 /// Vote support options.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1805,6 +1828,52 @@ impl GovernorContract {
             .instance()
             .get(&DataKey::ProposalCount)
             .unwrap_or(0)
+    }
+
+    /// Get proposal counts grouped by their current state.
+    ///
+    /// Iterates every proposal (1..=proposal_count) and calls `state()` on
+    /// each, producing a [`ProposalStateCounts`] with counts for each
+    /// possible state. The UI can use this to render filter-tab badges
+    /// without fetching every proposal individually.
+    ///
+    /// # Gas cost
+    ///
+    /// Each iteration performs a persistent storage read and the state
+    /// machine logic from [`Self::state`]. Budget approximately:
+    /// - ~10_000 CPU insns per proposal (read + state evaluation)
+    /// - ~200 bytes memory per proposal
+    ///
+    /// For governors with thousands of proposals, call this function
+    /// infrequently and on a dedicated simulation/Horizon endpoint.
+    pub fn proposals_count_by_state(env: Env) -> ProposalStateCounts {
+        let total = Self::proposal_count(env.clone());
+        let mut counts = ProposalStateCounts {
+            pending: 0,
+            active: 0,
+            succeeded: 0,
+            defeated: 0,
+            queued: 0,
+            executed: 0,
+            cancelled: 0,
+            expired: 0,
+        };
+
+        for id in 1..=total {
+            let state = Self::state(env.clone(), id);
+            match state {
+                ProposalState::Pending => counts.pending += 1,
+                ProposalState::Active => counts.active += 1,
+                ProposalState::Succeeded => counts.succeeded += 1,
+                ProposalState::Defeated => counts.defeated += 1,
+                ProposalState::Queued => counts.queued += 1,
+                ProposalState::Executed => counts.executed += 1,
+                ProposalState::Cancelled => counts.cancelled += 1,
+                ProposalState::Expired => counts.expired += 1,
+            }
+        }
+
+        counts
     }
 
     /// Get the ledger sequence of the last proposal by an address.
