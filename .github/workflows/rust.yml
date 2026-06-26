@@ -237,7 +237,6 @@ jobs:
           # Count all require_auth calls
           AUTH_COUNT=$(grep -r "require_auth()" contracts/ --include="*.rs" | wc -l)
           echo "Total require_auth() calls: $AUTH_COUNT"
-          echo "See docs/permissions.md for complete authorization matrix"
 
       - name: Run CoinFabrik Scout security scanner
         uses: CoinFabrik/scout-actions@v3.2
@@ -247,6 +246,9 @@ jobs:
 
   security-audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v1

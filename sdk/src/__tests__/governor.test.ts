@@ -786,3 +786,118 @@ describe("GovernorClient", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// uploadProposalMetadata tests (issue #429)
+// ---------------------------------------------------------------------------
+import { uploadProposalMetadata, MetadataUploadOptions } from "../governor";
+
+describe("uploadProposalMetadata()", () => {
+  const description = "Fund the security audit for the NebGov contracts.";
+
+  beforeEach(() => {
+    // Reset fetch mock between tests.
+    jest.restoreAllMocks();
+  });
+
+  it("uses customUploader when provided and returns uri + hash", async () => {
+    const customUploader = jest.fn().mockResolvedValue("ipfs://QmCustomHash");
+    const options: MetadataUploadOptions = { customUploader };
+
+    const result = await uploadProposalMetadata(description, options);
+
+    expect(customUploader).toHaveBeenCalledWith(description);
+    expect(result.uri).toBe("ipfs://QmCustomHash");
+    expect(result.hash).toMatch(/^[0-9a-f]{64}$/); // 64-char hex SHA-256
+  });
+
+  it("uploads via Pinata JWT and returns ipfs:// URI", async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ IpfsHash: "QmPinataHash123" }),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const options: MetadataUploadOptions = { pinataApiKey: "test-jwt-token" };
+    const result = await uploadProposalMetadata(description, options);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-jwt-token",
+        }),
+      }),
+    );
+    expect(result.uri).toBe("ipfs://QmPinataHash123");
+    expect(result.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("uploads via Pinata legacy API key + secret pair", async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ IpfsHash: "QmLegacyHash456" }),
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const options: MetadataUploadOptions = {
+      pinataApiKey: "my-api-key",
+      pinataSecretKey: "my-secret-key",
+    };
+    const result = await uploadProposalMetadata(description, options);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          pinata_api_key: "my-api-key",
+          pinata_secret_api_key: "my-secret-key",
+        }),
+      }),
+    );
+    expect(result.uri).toBe("ipfs://QmLegacyHash456");
+  });
+
+  it("throws when Pinata returns a non-OK response", async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => "Unauthorized",
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+
+    const options: MetadataUploadOptions = { pinataApiKey: "bad-key" };
+
+    await expect(uploadProposalMetadata(description, options)).rejects.toThrow(
+      "Pinata upload failed: 401 Unauthorized",
+    );
+  });
+
+  it("throws a clear error when no provider is configured", async () => {
+    const options: MetadataUploadOptions = {};
+
+    await expect(uploadProposalMetadata(description, options)).rejects.toThrow(
+      "No IPFS upload provider configured in options",
+    );
+  });
+
+  it("does NOT have a web3StorageToken field on MetadataUploadOptions (compile-time removal)", () => {
+    // This test documents that web3StorageToken has been removed from the
+    // public interface (issue #429).  TypeScript would catch this at compile
+    // time; here we verify it at runtime via the object shape.
+    const options: MetadataUploadOptions = {
+      customUploader: async () => "ipfs://test",
+    };
+    expect("web3StorageToken" in options).toBe(false);
+  });
+
+  it("customUploader errors propagate to the caller", async () => {
+    const customUploader = jest.fn().mockRejectedValue(new Error("IPFS node unreachable"));
+    const options: MetadataUploadOptions = { customUploader };
+
+    await expect(uploadProposalMetadata(description, options)).rejects.toThrow(
+      "IPFS node unreachable",
+    );
+  });
+});

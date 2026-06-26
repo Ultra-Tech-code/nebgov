@@ -820,6 +820,30 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "CachedExecutionWindow"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 1209600
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "CachedTimelockDelay"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "CurrentWasmHash"
                             }
                           ]
@@ -1657,6 +1681,30 @@
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "CachedExecutionWindow"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 1209600
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "CachedTimelockDelay"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u64": 0
                         }
                       },
                       {

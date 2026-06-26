@@ -25,3 +25,8 @@ export function subscriptionOptsFromConfig(config: GovernorConfig): {
 } {
   return { network: config.network, ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}) };
 }
+
+/** Returns the indexer base URL or null if not configured. */
+export function readIndexerUrl(): string | null {
+  return process.env.NEXT_PUBLIC_INDEXER_URL ?? null;
+}

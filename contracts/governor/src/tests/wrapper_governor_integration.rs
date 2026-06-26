@@ -100,11 +100,7 @@ fn test_flow_2_lock_withdrawal_fails() {
     wrapper_client.lock_withdrawal(&admin, &user, &100);
 
     // Withdrawal should fail
-    let result = env.as_contract(&wrapper_id, || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            wrapper_client.withdraw(&user, &500);
-        }))
-    });
+    let result = wrapper_client.try_withdraw(&user, &500);
     assert!(result.is_err());
 }
 
@@ -174,8 +170,10 @@ fn test_flow_5_quadratic_voting() {
 
     let timelock_id = env.register(TimelockContract, ());
     let governor_id = env.register(GovernorContract, ());
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
     let governor_client = GovernorContractClient::new(&env, &governor_id);
 
+    timelock_client.initialize(&admin, &governor_id, &1, &1_209_600);
     governor_client.initialize(
         &admin,
         &wrapper_id,

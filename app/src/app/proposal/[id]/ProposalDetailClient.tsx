@@ -37,7 +37,13 @@ import {
   ReferenceLine,
 } from "recharts";
 
+import { ErrorBoundary } from "../../../components/ErrorBoundary";
+import { ErrorState } from "../../../components/ErrorState";
 import { useTheme } from "../../../hooks/useTheme";
+import {
+  getErrorMessage,
+  reportFrontendError,
+} from "../../../lib/frontend-error";
 import { ProposalDetailSkeleton } from "../../../components/ui/ProposalDetailSkeleton";
 
 interface Props {
@@ -77,9 +83,18 @@ const INITIAL_PROPOSAL = {
 };
 
 export default function ProposalDetailClient({ params }: Props) {
-  const proposalId = useMemo(() => BigInt(params.id), [params.id]);
+  const proposalId = useMemo(() => {
+    try {
+      return BigInt(params.id);
+    } catch {
+      throw new Error(`Invalid proposal id: ${params.id}`);
+    }
+  }, [params.id]);
   const [proposal, setProposal] = useState(INITIAL_PROPOSAL);
   const [loading, setLoading] = useState(true);
+  const [proposalLoadError, setProposalLoadError] = useState<string | null>(
+    null,
+  );
   const [metadata, setMetadata] = useState<string | null>(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [hashMismatched, setHashMismatched] = useState(false);
@@ -101,11 +116,13 @@ export default function ProposalDetailClient({ params }: Props) {
   const [votedSupport, setVotedSupport] = useState<VoteSupport | null>(null);
   const [voteType, setVoteType] = useState<VoteType>(VoteType.Simple);
   const [currentDelegatee, setCurrentDelegatee] = useState<string | null>(null);
+  const [delegationError, setDelegationError] = useState<string | null>(null);
 
   // Votes pagination
   const [votes, setVotes] = useState<ProposalVote[]>([]);
   const [votesPage, setVotesPage] = useState(0);
   const [votesLoading, setVotesLoading] = useState(false);
+  const [votesError, setVotesError] = useState<string | null>(null);
   const [votesTotal, setVotesTotal] = useState(0);
   const [votesHasMore, setVotesHasMore] = useState(false);
   const [votesSort, setVotesSort] = useState<"newest" | "weight" | "address">(
@@ -119,6 +136,7 @@ export default function ProposalDetailClient({ params }: Props) {
   const loadVotes = useCallback(
     async (pageNum: number, append = false) => {
       setVotesLoading(true);
+      setVotesError(null);
       try {
         const result = await fetchProposalVotes(
           params.id,
@@ -134,7 +152,13 @@ export default function ProposalDetailClient({ params }: Props) {
         setVotesTotal(result.total);
         setVotesHasMore(result.hasMore);
       } catch (err) {
-        console.error("Failed to load votes:", err);
+        reportFrontendError("proposal_votes_load", err, {
+          proposalId: params.id,
+          page: pageNum,
+          append,
+          sort: votesSort,
+        });
+        setVotesError(getErrorMessage(err));
       } finally {
         setVotesLoading(false);
       }
@@ -189,6 +213,7 @@ export default function ProposalDetailClient({ params }: Props) {
   const loadProposal = useCallback(async () => {
     if (!governorClient) return;
     setLoading(true);
+    setProposalLoadError(null);
     try {
       const p = await governorClient.getProposal(proposalId);
       const state = await governorClient.getProposalState(proposalId);
@@ -208,11 +233,14 @@ export default function ProposalDetailClient({ params }: Props) {
         setQuorumValue(quorum);
       }
     } catch (err) {
-      console.error("Failed to load proposal:", err);
+      reportFrontendError("proposal_detail_load", err, {
+        proposalId: params.id,
+      });
+      setProposalLoadError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, [governorClient, proposalId]);
+  }, [governorClient, proposalId, params.id]);
 
   useEffect(() => {
     loadProposal();
@@ -259,12 +287,16 @@ export default function ProposalDetailClient({ params }: Props) {
         proposal.descriptionHash,
       );
       setHashMismatched(!isMatch);
-    } catch (err: any) {
-      setFetchError(err.message);
+    } catch (err) {
+      reportFrontendError("proposal_metadata_load", err, {
+        proposalId: params.id,
+        metadataUri: proposal.metadataUri,
+      });
+      setFetchError(getErrorMessage(err));
     } finally {
       setMetadataLoading(false);
     }
-  }, [proposal.metadataUri, proposal.descriptionHash]);
+  }, [proposal.metadataUri, proposal.descriptionHash, params.id]);
 
   useEffect(() => {
     if (proposal.id !== 0n) {
@@ -275,11 +307,16 @@ export default function ProposalDetailClient({ params }: Props) {
   async function refreshDelegation() {
     if (!votesClient || !publicKey) return;
     setDelegationLoading(true);
+    setDelegationError(null);
     try {
       const power = await votesClient.getVotes(publicKey);
       setVotingPower(power);
     } catch (err) {
-      console.error("Failed to fetch voting power:", err);
+      reportFrontendError("proposal_delegation_load", err, {
+        proposalId: params.id,
+        publicKey,
+      });
+      setDelegationError(getErrorMessage(err));
     } finally {
       setDelegationLoading(false);
     }
@@ -367,6 +404,7 @@ export default function ProposalDetailClient({ params }: Props) {
 
   async function exportVotesCsv() {
     setExportingCsv(true);
+    setVotesError(null);
     try {
       const rows: ProposalVote[] = [];
       let page = 0;
@@ -405,6 +443,12 @@ export default function ProposalDetailClient({ params }: Props) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      reportFrontendError("proposal_votes_export", err, {
+        proposalId: params.id,
+        sort: votesSort,
+      });
+      setVotesError(getErrorMessage(err));
     } finally {
       setExportingCsv(false);
     }
@@ -414,8 +458,29 @@ export default function ProposalDetailClient({ params }: Props) {
     return <ProposalDetailSkeleton />;
   }
 
+  if (proposalLoadError && proposal.id === 0n) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <ErrorState
+          title="Failed to load proposal"
+          message={proposalLoadError}
+          onRetry={() => void loadProposal()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+      {proposalLoadError ? (
+        <ErrorState
+          title="Proposal data is out of date"
+          message={proposalLoadError}
+          onRetry={() => void loadProposal()}
+          className="mb-6"
+        />
+      ) : null}
+
       <div className="flex items-center justify-between gap-3 mb-1">
         <div className="flex items-center gap-2">
           <p className="text-sm text-gray-400">Proposal #{params.id}</p>
@@ -499,6 +564,16 @@ export default function ProposalDetailClient({ params }: Props) {
       )}
 
       {/* Metadata / Description Section */}
+      <ErrorBoundary
+        title="Failed to render proposal description"
+        resetKeys={[
+          proposal.id.toString(),
+          proposal.descriptionHash,
+          metadata ?? "",
+          fetchError ?? "",
+        ]}
+        className="mb-6"
+      >
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 mb-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
@@ -535,9 +610,34 @@ export default function ProposalDetailClient({ params }: Props) {
           </p>
         )}
       </div>
+      </ErrorBoundary>
 
       {/* Delegation */}
+      <ErrorBoundary
+        title="Failed to render voting power"
+        resetKeys={[
+          publicKey ?? "",
+          currentDelegatee ?? "",
+          votingPower.toString(),
+          delegationError ?? "",
+        ]}
+        className="mb-6"
+      >
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 mb-6">
+        {delegationError ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="flex items-center justify-between gap-3">
+              <span>{delegationError}</span>
+              <button
+                type="button"
+                onClick={() => void refreshDelegation()}
+                className="shrink-0 rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium hover:bg-amber-100"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="flex items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-1">
@@ -560,8 +660,21 @@ export default function ProposalDetailClient({ params }: Props) {
           </button>
         </div>
       </div>
+      </ErrorBoundary>
 
       {/* Vote bars */}
+      <ErrorBoundary
+        title="Failed to render vote totals"
+        resetKeys={[
+          proposal.id.toString(),
+          proposal.votesFor.toString(),
+          proposal.votesAgainst.toString(),
+          proposal.votesAbstain.toString(),
+          proposal.quorum.toString(),
+          voteType,
+        ]}
+        className="mb-6"
+      >
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 mb-6 space-y-4">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
@@ -698,9 +811,19 @@ export default function ProposalDetailClient({ params }: Props) {
           </div>
         )}
       </div>
+      </ErrorBoundary>
 
       {/* Voting UI */}
       {proposal.state === ProposalState.Active && !voted && (
+        <ErrorBoundary
+          title="Failed to render voting controls"
+          resetKeys={[
+            proposal.id.toString(),
+            selectedSupport ?? "none",
+            voteError ?? "",
+            isConnected,
+          ]}
+        >
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
           <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-4">
             Cast Your Vote
@@ -798,6 +921,7 @@ export default function ProposalDetailClient({ params }: Props) {
             </>
           )}
         </div>
+        </ErrorBoundary>
       )}
 
       {voted && (
@@ -814,6 +938,17 @@ export default function ProposalDetailClient({ params }: Props) {
       )}
 
       {/* Votes List with Pagination */}
+      <ErrorBoundary
+        title="Failed to render votes list"
+        resetKeys={[
+          proposal.id.toString(),
+          votes.length,
+          votesTotal,
+          votesSort,
+          votesError ?? "",
+        ]}
+        className="mt-6"
+      >
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 mt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
@@ -833,6 +968,21 @@ export default function ProposalDetailClient({ params }: Props) {
             </button>
           </div>
         </div>
+
+        {votesError ? (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <div className="flex items-center justify-between gap-3">
+              <span>{votesError}</span>
+              <button
+                type="button"
+                onClick={() => void loadVotes(votesPage, false)}
+                className="shrink-0 rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium hover:bg-amber-100"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-2 mb-4">
           <span className="text-xs text-gray-500">Sort by:</span>
@@ -962,27 +1112,33 @@ export default function ProposalDetailClient({ params }: Props) {
           </button>
         )}
       </div>
+      </ErrorBoundary>
 
-      <DelegateModal
-        open={delegateModalOpen}
-        onClose={() => setDelegateModalOpen(false)}
-        onDelegated={refreshDelegation}
-        currentDelegatee={currentDelegatee}
-      />
-      <VotingModal
-        open={voteModalOpen}
-        onClose={() => setVoteModalOpen(false)}
-        proposalId={proposalId}
-        preselectedSupport={selectedSupport}
-        votingPower={votingPower}
-        voteType={voteType}
-        onVoted={() => {
-          setVoted(true);
-          loadProposal();
-        }}
-        onOpenDelegate={() => setDelegateModalOpen(true)}
-        governorClient={governorClient}
-      />
+      <ErrorBoundary
+        title="Failed to render governance actions"
+        resetKeys={[delegateModalOpen, voteModalOpen, proposal.id.toString()]}
+      >
+        <DelegateModal
+          open={delegateModalOpen}
+          onClose={() => setDelegateModalOpen(false)}
+          onDelegated={refreshDelegation}
+          currentDelegatee={currentDelegatee}
+        />
+        <VotingModal
+          open={voteModalOpen}
+          onClose={() => setVoteModalOpen(false)}
+          proposalId={proposalId}
+          preselectedSupport={selectedSupport}
+          votingPower={votingPower}
+          voteType={voteType}
+          onVoted={() => {
+            setVoted(true);
+            void loadProposal();
+          }}
+          onOpenDelegate={() => setDelegateModalOpen(true)}
+          governorClient={governorClient}
+        />
+      </ErrorBoundary>
     </div>
   );
 }

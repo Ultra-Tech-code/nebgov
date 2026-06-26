@@ -1,4 +1,4 @@
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import { pool } from "./db";
 import { cached, getMetrics } from "./cache";
@@ -6,6 +6,107 @@ import { getLastIndexedLedger } from "./events";
 import { startTime } from "./index";
 import swaggerUi from "swagger-ui-express";
 import { generateOpenApiDocument } from "./openapi";
+
+// ---------------------------------------------------------------------------
+// In-process rate limiter (issue #437)
+//
+// Tracks request counts per IP in a sliding window. No external dependency
+// required — the store is a plain Map that is pruned on every request so
+// memory usage stays bounded.
+// ---------------------------------------------------------------------------
+
+interface RateLimitEntry {
+  count: number;
+  windowStart: number;
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+/**
+ * Build an Express middleware that limits each IP to `max` requests within
+ * a rolling `windowMs` millisecond window.
+ *
+ * When the limit is exceeded the middleware responds with HTTP 429 and a
+ * JSON body that includes a `Retry-After` header (seconds until the window
+ * resets) so well-behaved clients can back off automatically.
+ */
+function createRateLimiter(options: {
+  windowMs: number;
+  max: number;
+  message?: string;
+}) {
+  const { windowMs, max, message = "Too many requests, please try again later." } = options;
+
+  return function rateLimitMiddleware(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
+    const ip =
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0].trim() ??
+      req.socket.remoteAddress ??
+      "unknown";
+
+    const now = Date.now();
+
+    // Prune stale entries to keep the store from growing unboundedly.
+    for (const [key, entry] of rateLimitStore.entries()) {
+      if (now - entry.windowStart > windowMs) {
+        rateLimitStore.delete(key);
+      }
+    }
+
+    const entry = rateLimitStore.get(ip);
+
+    if (!entry || now - entry.windowStart > windowMs) {
+      // First request in this window (or window has expired).
+      rateLimitStore.set(ip, { count: 1, windowStart: now });
+      res.setHeader("X-RateLimit-Limit", max);
+      res.setHeader("X-RateLimit-Remaining", max - 1);
+      res.setHeader("X-RateLimit-Reset", Math.ceil((now + windowMs) / 1000));
+      next();
+      return;
+    }
+
+    entry.count += 1;
+    const remaining = Math.max(0, max - entry.count);
+    const resetAt = Math.ceil((entry.windowStart + windowMs) / 1000);
+
+    res.setHeader("X-RateLimit-Limit", max);
+    res.setHeader("X-RateLimit-Remaining", remaining);
+    res.setHeader("X-RateLimit-Reset", resetAt);
+
+    if (entry.count > max) {
+      const retryAfter = Math.ceil((entry.windowStart + windowMs - now) / 1000);
+      res.setHeader("Retry-After", retryAfter);
+      res.status(429).json({ error: message });
+      return;
+    }
+
+    next();
+  };
+}
+
+/** General-purpose limiter: 100 requests per 15-minute window per IP. */
+const generalLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+});
+
+/**
+ * Stricter limiter for expensive / enumeration-prone endpoints.
+ *
+ * Applied to:
+ *   - GET /delegates  (N+1 query risk)
+ *   - GET /profile/:address  (enumeration attack surface)
+ *
+ * Allows 30 requests per 15-minute window per IP.
+ */
+const strictLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: "Too many requests to this endpoint, please slow down.",
+});
 
 const TTL = {
   proposals: 30_000, // 30 seconds
@@ -140,6 +241,11 @@ async function getStatsStatus(server: SorobanRpc.Server): Promise<StatsResponse>
 export function createApp(server: SorobanRpc.Server): express.Application {
   const app = express();
   app.use(express.json());
+
+  // Apply general rate limiting to all routes (issue #437).
+  // Health and docs endpoints are intentionally included so that monitoring
+  // probes cannot be weaponised to exhaust the database connection pool.
+  app.use(generalLimiter);
 
   // Swagger documentation
   app.get("/openapi.json", (_req, res) => {
@@ -360,7 +466,7 @@ export function createApp(server: SorobanRpc.Server): express.Application {
   );
 
   // GET /delegates?top=20
-  app.get("/delegates", async (req: Request, res: Response): Promise<void> => {
+  app.get("/delegates", strictLimiter, async (req: Request, res: Response): Promise<void> => {
     const top = Math.min(Number(req.query.top ?? 20), 100);
     const key = `delegates:${top}`;
     try {
@@ -387,6 +493,7 @@ export function createApp(server: SorobanRpc.Server): express.Application {
   // GET /profile/:address
   app.get(
     "/profile/:address",
+    strictLimiter,
     async (req: Request, res: Response): Promise<void> => {
       const { address } = req.params;
       const key = `profile:${address}`;

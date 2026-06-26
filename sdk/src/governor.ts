@@ -37,9 +37,23 @@ export interface MetadataUploadOptions {
   pinataApiKey?: string;
   /** Pinata Secret Key (if using API Key/Secret pair) */
   pinataSecretKey?: string;
-  /** web3.storage API token */
-  web3StorageToken?: string;
-  /** Custom uploader function for other IPFS gateways */
+  /**
+   * Custom uploader function for other IPFS gateways.
+   *
+   * Use this to integrate any storage provider not natively supported by the
+   * SDK (e.g. web3.storage, nft.storage, Filebase, etc.).  The function
+   * receives the raw description string and must return a fully-qualified
+   * IPFS URI (`ipfs://…`).
+   *
+   * @example
+   * // web3.storage integration (tracked in issue #429)
+   * const options: MetadataUploadOptions = {
+   *   customUploader: async (content) => {
+   *     // Use @web3-storage/w3up-client or any compatible library here.
+   *     throw new Error("web3.storage uploader not yet configured");
+   *   },
+   * };
+   */
   customUploader?: (content: string) => Promise<string>;
 }
 
@@ -2314,8 +2328,6 @@ export async function uploadProposalMetadata(
 
     const data = (await response.json()) as { IpfsHash: string };
     uri = `ipfs://${data.IpfsHash}`;
-  } else if (options.web3StorageToken) {
-    throw new Error("web3.storage support not yet implemented");
   } else {
     throw new Error("No IPFS upload provider configured in options");
   }

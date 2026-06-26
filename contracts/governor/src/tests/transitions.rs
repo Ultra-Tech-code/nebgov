@@ -27,6 +27,20 @@ impl MockVotesContract {
     }
 }
 
+#[contract]
+pub struct MockTimelockContract;
+
+#[contractimpl]
+impl MockTimelockContract {
+    pub fn min_delay(_env: Env) -> u64 {
+        1
+    }
+
+    pub fn execution_window(_env: Env) -> u64 {
+        60
+    }
+}
+
 /// Shared helper: initialize the governor with standard test parameters.
 fn setup() -> (
     Env,
@@ -42,7 +56,7 @@ fn setup() -> (
 
     let admin = Address::generate(&env);
     let votes_token_id = env.register(MockVotesContract, ());
-    let timelock = Address::generate(&env);
+    let timelock = env.register(MockTimelockContract, ());
     let proposer = Address::generate(&env);
     let voter = Address::generate(&env);
 
@@ -391,29 +405,64 @@ fn test_execute_batch_executes_all_in_order() {
 
     let timelock_id = env.register(sorogov_timelock::TimelockContract, ());
     let timelock_client = sorogov_timelock::TimelockContractClient::new(&env, &timelock_id);
-    timelock_client.initialize(&admin, &client.address, &0);
+    timelock_client.initialize(&admin, &client.address, &0u64, &1_209_600u64);
 
-    let votes_token = Address::generate(&env);
-    client.initialize(&admin, &votes_token, &timelock_id, &10, &100, &0, &0);
+    let votes_token_id = env.register(MockVotesContract, ());
+    let guardian = Address::generate(&env);
+    client.initialize(
+        &admin,
+        &votes_token_id,
+        &timelock_id,
+        &10,
+        &100,
+        &0,
+        &0,
+        &guardian,
+        &VoteType::Extended,
+        &120_960,
+    );
 
     let dummy_id = env.register(LocalDummyContract, ());
     let fn_name = Symbol::new(&env, "noop");
     let description_1 = String::from_str(&env, "batch-1");
     let description_2 = String::from_str(&env, "batch-2");
+    let description_hash_1 = env
+        .crypto()
+        .sha256(&Bytes::from_slice(&env, b"batch-1"))
+        .into();
+    let description_hash_2 = env
+        .crypto()
+        .sha256(&Bytes::from_slice(&env, b"batch-2"))
+        .into();
+    let metadata_uri_1 = String::from_str(&env, "https://example.com/batch-1");
+    let metadata_uri_2 = String::from_str(&env, "https://example.com/batch-2");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(dummy_id.clone());
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name.clone());
+    let mut calldatas_1 = soroban_sdk::Vec::new(&env);
+    calldatas_1.push_back(Bytes::new(&env));
+    let mut calldatas_2 = soroban_sdk::Vec::new(&env);
+    calldatas_2.push_back(Bytes::from_array(&env, &[7u8]));
 
     let proposal_1 = client.propose(
         &proposer,
         &description_1,
-        &dummy_id,
-        &fn_name,
-        &Bytes::new(&env),
+        &description_hash_1,
+        &metadata_uri_1,
+        &targets,
+        &fn_names,
+        &calldatas_1,
     );
     let proposal_2 = client.propose(
         &proposer,
         &description_2,
-        &dummy_id,
-        &fn_name,
-        &Bytes::from_array(&env, &[7u8]),
+        &description_hash_2,
+        &metadata_uri_2,
+        &targets,
+        &fn_names,
+        &calldatas_2,
     );
 
     env.ledger().set_sequence_number(10);

@@ -31,6 +31,9 @@ pub struct TxProposal {
     pub approvals: u32,
     pub executed: bool,
     pub cancelled: bool,
+    /// Amount reserved from daily limit (if submitted via submit_with_limit).
+    /// None for regular submit() calls.
+    pub reserved_daily_amount: Option<i128>,
 }
 
 /// A single recipient in a batch transfer.
@@ -112,10 +115,7 @@ impl TreasuryContract {
     /// Initialize with owners, threshold, and governor address.
     pub fn initialize(env: Env, owners: Vec<Address>, threshold: u32, governor: Address) {
         assert!(!owners.is_empty(), "no owners");
-        assert!(
-            threshold > 0 && threshold <= owners.len(),
-            "bad threshold"
-        );
+        assert!(threshold > 0 && threshold <= owners.len(), "bad threshold");
         env.storage().instance().set(&DataKey::Owners, &owners);
         env.storage()
             .instance()
@@ -174,9 +174,7 @@ impl TreasuryContract {
 
     /// Get the configured spending cap for a token, if any.
     pub fn get_spending_cap(env: Env, token: Address) -> Option<SpendingCap> {
-        env.storage()
-            .instance()
-            .get(&DataKey::SpendingCap(token))
+        env.storage().instance().get(&DataKey::SpendingCap(token))
     }
 
     /// Get the amount spent in the current spending period for a token.
@@ -234,6 +232,7 @@ impl TreasuryContract {
             approvals: 0,
             executed: false,
             cancelled: false,
+            reserved_daily_amount: None,
         };
 
         env.storage().persistent().set(&DataKey::Tx(id), &tx);
@@ -319,8 +318,31 @@ impl TreasuryContract {
             .instance()
             .set(&DataKey::DailySpent, &new_daily_total);
 
-        // Proceed with standard proposal submission logic.
-        Self::submit_internal(env, proposer, target, symbol_short!("transfer"), data)
+        // Create proposal with reserved amount tracking
+        Self::require_not_executing(&env);
+        Self::require_owner(&env, &proposer);
+
+        let count: u64 = env.storage().instance().get(&DataKey::TxCount).unwrap_or(0);
+        let id = count + 1;
+
+        let tx = TxProposal {
+            id,
+            proposer,
+            target,
+            fn_name: symbol_short!("transfer"),
+            data,
+            created_ledger: env.ledger().sequence(),
+            approvals: 0,
+            executed: false,
+            cancelled: false,
+            reserved_daily_amount: Some(amount),
+        };
+
+        env.storage().persistent().set(&DataKey::Tx(id), &tx);
+        env.storage().instance().set(&DataKey::TxCount, &id);
+        env.events().publish((symbol_short!("submit"),), id);
+
+        id
     }
 
     /// Approve a pending transaction. Executes automatically when threshold reached.
@@ -392,6 +414,18 @@ impl TreasuryContract {
             .get(&DataKey::Tx(tx_id))
             .expect("tx not found");
         assert!(!tx.executed && !tx.cancelled, "invalid state");
+        
+        // If this proposal had a reserved daily amount, refund it
+        if let Some(reserved) = tx.reserved_daily_amount {
+            let spent: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::DailySpent)
+                .unwrap_or(0i128);
+            let new_spent = spent.saturating_sub(reserved);
+            env.storage().instance().set(&DataKey::DailySpent, &new_spent);
+        }
+        
         tx.cancelled = true;
         env.storage().persistent().set(&DataKey::Tx(tx_id), &tx);
         env.events().publish((symbol_short!("cancel"),), tx_id);
@@ -497,9 +531,10 @@ impl TreasuryContract {
         ));
 
         if cap.is_some() {
-            env.storage()
-                .persistent()
-                .set(&DataKey::SpentThisPeriod(token.clone(), period_start), &new_spent);
+            env.storage().persistent().set(
+                &DataKey::SpentThisPeriod(token.clone(), period_start),
+                &new_spent,
+            );
         }
 
         let hash = env.crypto().sha256(&hash_input);
@@ -555,6 +590,9 @@ impl TreasuryContract {
 
         let i = index.expect("not an owner");
         owners.remove(i);
+
+        // Prevent slashing the last owner to avoid invalid state (0 owners, threshold 0)
+        assert!(!owners.is_empty(), "cannot slash the last owner");
 
         env.storage().instance().set(&DataKey::Owners, &owners);
         env.storage()
@@ -1497,5 +1535,24 @@ mod tests {
 
         let non_owner = Address::generate(&env);
         client.slash_signer(&governor, &non_owner, &Symbol::new(&env, "bad"));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot slash the last owner")]
+    fn test_slash_last_owner() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (treasury_id, _token_addr, governor) = setup(&env);
+        let client = TreasuryContractClient::new(&env, &treasury_id);
+
+        let owner = Address::generate(&env);
+        let mut owners = Vec::new(&env);
+        owners.push_back(owner.clone());
+        client.initialize(&owners, &1u32, &governor);
+
+        // Attempting to slash the only owner should fail
+        let reason = Symbol::new(&env, "malicious");
+        client.slash_signer(&governor, &owner, &reason);
     }
 }

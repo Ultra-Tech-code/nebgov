@@ -272,3 +272,124 @@ describe("GET /proposals with cursor pagination", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate limiting tests (issue #437)
+// ---------------------------------------------------------------------------
+describe("Rate limiting", () => {
+  /**
+   * Each test creates a fresh app instance so the in-process rate-limit
+   * store is reset between test cases.
+   *
+   * NOTE: The general limiter allows 100 req / 15 min and the strict limiter
+   * allows 30 req / 15 min.  We exhaust each by sending one extra request
+   * beyond the limit and asserting the final response is HTTP 429.
+   */
+  let rateLimitApp: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    const freshServer = {
+      getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1050 }),
+    } as any;
+    rateLimitApp = createApp(freshServer);
+
+    // Default mock so route handlers don't throw on DB calls.
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
+  it("should include X-RateLimit-* headers on normal requests", async () => {
+    const response = await request(rateLimitApp)
+      .get("/proposals/1")
+      .set("X-Forwarded-For", "192.0.2.1");
+
+    expect(response.headers["x-ratelimit-limit"]).toBeDefined();
+    expect(response.headers["x-ratelimit-remaining"]).toBeDefined();
+    expect(response.headers["x-ratelimit-reset"]).toBeDefined();
+  });
+
+  it("should return 429 after exceeding the general rate limit (100 req/15 min)", async () => {
+    const responses: number[] = [];
+    for (let i = 0; i <= 100; i++) {
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const r = await request(rateLimitApp)
+        .get("/proposals/1")
+        .set("X-Forwarded-For", "192.0.2.10");
+      responses.push(r.status);
+    }
+
+    // The 101st request (index 100) must be rate-limited.
+    expect(responses[100]).toBe(429);
+    // All earlier requests must not be 429.
+    expect(responses.slice(0, 100).every((s) => s !== 429)).toBe(true);
+  });
+
+  it("should return 429 with Retry-After header when rate limited", async () => {
+    for (let i = 0; i <= 100; i++) {
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      await request(rateLimitApp)
+        .get("/proposals/1")
+        .set("X-Forwarded-For", "192.0.2.11");
+    }
+
+    (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const limited = await request(rateLimitApp)
+      .get("/proposals/1")
+      .set("X-Forwarded-For", "192.0.2.11");
+
+    expect(limited.status).toBe(429);
+    expect(limited.headers["retry-after"]).toBeDefined();
+    expect(limited.body.error).toMatch(/too many requests/i);
+  });
+
+  it("should apply stricter limit (30 req/15 min) to /delegates", async () => {
+    const responses: number[] = [];
+    for (let i = 0; i <= 30; i++) {
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      const r = await request(rateLimitApp)
+        .get("/delegates")
+        .set("X-Forwarded-For", "192.0.2.20");
+      responses.push(r.status);
+    }
+
+    expect(responses[30]).toBe(429);
+    expect(responses.slice(0, 30).every((s) => s !== 429)).toBe(true);
+  });
+
+  it("should apply stricter limit (30 req/15 min) to /profile/:address", async () => {
+    const responses: number[] = [];
+    for (let i = 0; i <= 30; i++) {
+      (pool.query as jest.Mock)
+        .mockResolvedValueOnce({ rows: [{ count: "0" }] })
+        .mockResolvedValueOnce({ rows: [{ count: "0", sum: null }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ sum: "0" }] })
+        .mockResolvedValueOnce({ rows: [{ sum: "0" }] });
+      const r = await request(rateLimitApp)
+        .get("/profile/GABC123")
+        .set("X-Forwarded-For", "192.0.2.21");
+      responses.push(r.status);
+    }
+
+    expect(responses[30]).toBe(429);
+    expect(responses.slice(0, 30).every((s) => s !== 429)).toBe(true);
+  });
+
+  it("should track rate limits independently per IP address", async () => {
+    // Exhaust the limit for IP A.
+    for (let i = 0; i <= 100; i++) {
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+      await request(rateLimitApp)
+        .get("/proposals/1")
+        .set("X-Forwarded-For", "192.0.2.30");
+    }
+
+    // IP B should still be within its own limit.
+    (pool.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const ipBResponse = await request(rateLimitApp)
+      .get("/proposals/1")
+      .set("X-Forwarded-For", "192.0.2.31");
+
+    expect(ipBResponse.status).not.toBe(429);
+  });
+});

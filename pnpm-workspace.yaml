@@ -3,5 +3,4 @@ packages:
   - 'app'
   - 'packages/cli'
   - 'packages/indexer'
-  - 'packages/cli'
   - 'backend'

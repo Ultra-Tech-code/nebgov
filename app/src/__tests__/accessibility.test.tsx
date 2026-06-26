@@ -6,7 +6,8 @@ import React from 'react';
 import { render } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { VotingModal } from '../components/VotingModal';
-import { VoteSupport } from '@nebgov/sdk';
+import { ProposalStateBadge } from '../components/ProposalStateBadge';
+import { ProposalState, VoteSupport } from '@nebgov/sdk';
 
 // Extend Jest matchers
 expect.extend(toHaveNoViolations);
@@ -111,23 +112,68 @@ describe('Accessibility Tests', () => {
     });
   });
 
-  describe('Color Contrast', () => {
-    it('should meet WCAG AA contrast requirements for status badges', () => {
-      // This is a basic test - in a real scenario, you'd use tools like 
-      // @testing-library/jest-dom with custom matchers or axe-core
-      const statusColors = {
-        'bg-yellow-100 text-yellow-800': { bg: '#fef3c7', text: '#92400e' },
-        'bg-blue-100 text-blue-800': { bg: '#dbeafe', text: '#1e40af' },
-        'bg-green-100 text-green-800': { bg: '#dcfce7', text: '#166534' },
-        'bg-red-100 text-red-800': { bg: '#fee2e2', text: '#991b1b' },
-        'bg-purple-100 text-purple-800': { bg: '#f3e8ff', text: '#6b21a8' },
-        'bg-gray-100 text-gray-800': { bg: '#f3f4f6', text: '#1f2937' },
-      };
+  describe('ProposalStateBadge', () => {
+    const STATES = [
+      ProposalState.Pending,
+      ProposalState.Active,
+      ProposalState.Succeeded,
+      ProposalState.Defeated,
+      ProposalState.Queued,
+      ProposalState.Executed,
+      ProposalState.Cancelled,
+      ProposalState.Expired,
+    ];
 
-      // In a real implementation, you would calculate contrast ratios
-      // and ensure they meet WCAG AA standards (4.5:1 for normal text)
-      Object.keys(statusColors).forEach(colorClass => {
-        expect(colorClass).toBeTruthy(); // Placeholder for actual contrast checking
+    it.each(STATES)('renders a visible label for state %s', (state) => {
+      const { getByText } = render(<ProposalStateBadge state={state} />);
+      expect(getByText(state, { exact: false })).toBeInTheDocument();
+    });
+
+    it('should not have accessibility violations for proposal state badges', async () => {
+      const { container } = render(
+        <div>
+          {STATES.map((state) => (
+            <ProposalStateBadge key={state} state={state} />
+          ))}
+        </div>
+      );
+
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+  });
+
+  describe('Color Contrast', () => {
+    const statusColors: Record<string, { bg: string; text: string }> = {
+      Pending: { bg: '#fef3c7', text: '#92400e' },
+      Active: { bg: '#dbeafe', text: '#1e40af' },
+      Succeeded: { bg: '#dcfce7', text: '#166534' },
+      Defeated: { bg: '#fee2e2', text: '#991b1b' },
+      Queued: { bg: '#f3e8ff', text: '#6b21a8' },
+      Executed: { bg: '#f3e8ff', text: '#6b21a8' },
+      Cancelled: { bg: '#f3f4f6', text: '#374151' },
+      Expired: { bg: '#fff1f2', text: '#9f1239' },
+    };
+
+    const hexToLuminance = (hex: string) => {
+      const normalized = hex.replace('#', '');
+      const rgb = [0, 1, 2].map((index) => parseInt(normalized.slice(index * 2, index * 2 + 2), 16) / 255);
+      const adjusted = rgb.map((channel) => (channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4)));
+      return 0.2126 * adjusted[0] + 0.7152 * adjusted[1] + 0.0722 * adjusted[2];
+    };
+
+    const contrastRatio = (hexA: string, hexB: string) => {
+      const lumA = hexToLuminance(hexA);
+      const lumB = hexToLuminance(hexB);
+      const lighter = Math.max(lumA, lumB);
+      const darker = Math.min(lumA, lumB);
+      return (lighter + 0.05) / (darker + 0.05);
+    };
+
+    it('should meet WCAG AA contrast requirements for status badge text', () => {
+      Object.entries(statusColors).forEach(([label, { bg, text }]) => {
+        const ratio = contrastRatio(bg, text);
+        expect(ratio).toBeGreaterThanOrEqual(4.5);
       });
     });
   });

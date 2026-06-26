@@ -24,3 +24,5 @@ Thumbs.db
 .idea/
 *.swp
 .claude/
+.cargo/
+test_snapshots/

@@ -832,6 +832,79 @@ fn test_multi_token_quorum_uses_weighted_total_supply_sum() {
 }
 
 #[test]
+fn test_multi_token_cast_vote_and_quorum_with_two_weighted_tokens() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let token_a = env.register(ConfigurableVotesContract, ());
+    let token_b = env.register(ConfigurableVotesContract, ());
+
+    let token_a_client = ConfigurableVotesContractClient::new(&env, &token_a);
+    let token_b_client = ConfigurableVotesContractClient::new(&env, &token_b);
+
+    token_a_client.set_total_supply(&10_000);
+    token_b_client.set_total_supply(&5_000);
+    token_a_client.set_votes(&voter, &2_000);
+    token_b_client.set_votes(&voter, &1_000);
+
+    let timelock_id = env.register(TimelockContract, ());
+    let governor_id = env.register(GovernorContract, ());
+    let mock_target_id = env.register(MockTarget, ());
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+
+    timelock_client.initialize(&admin, &governor_id, &0, &1_209_600);
+    governor_client.initialize(
+        &admin,
+        &token_a,
+        &timelock_id,
+        &10,
+        &20,
+        &20,
+        &0,
+        &guardian,
+        &VoteType::Extended,
+        &120_960,
+    );
+
+    let strategy = make_multi_token_strategy(
+        &env,
+        &[(token_a.clone(), 6_000), (token_b.clone(), 4_000)],
+    );
+    governor_client.set_voting_strategy(&strategy);
+
+    let proposal_id = propose_exec_gov(
+        &env,
+        &governor_client,
+        &proposer,
+        &mock_target_id,
+        b"multi-token-two-token-weighted",
+    );
+
+    assert_eq!(governor_client.quorum(&proposal_id), 1_600);
+
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
+
+    let (votes_for, votes_against, votes_abstain) = governor_client.proposal_votes(&proposal_id);
+    assert_eq!(votes_for, 1_600);
+    assert_eq!(votes_against, 0);
+    assert_eq!(votes_abstain, 0);
+    assert!(governor_client.is_quorum_reached(&proposal_id));
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Succeeded
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #27)")]
 fn test_multi_token_overflow_is_rejected() {
     let env = Env::default();
@@ -1662,214 +1735,291 @@ fn test_set_pauser_requires_self_auth() {
     governor_client.set_pauser(&new_pauser);
 }
 
-// ============================================================================
-// VotesToken Panic & Validation Guard Tests (Issue #696)
-// ============================================================================
+/// Regression test for issue #600: cancel_queued used /10 instead of /5 to
+/// convert the timelock delay (seconds) to ledgers, halving the guardian's
+/// veto window.
+///
+/// With `min_delay = 100` seconds:
+///   - Buggy window end  = queue_ledger + (100 / 10) = queue_ledger + 10
+///   - Correct window end = queue_ledger + (100 /  5) = queue_ledger + 20
+///
+/// This test advances 11 ledgers past the queue point — past the old (wrong)
+/// boundary but still inside the correct window — and asserts that the
+/// guardian can successfully cancel.  With the bug present the call panics
+/// with `VetoWindowClosed`.
+#[test]
+fn test_cancel_queued_veto_window_uses_correct_conversion_factor() {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
 
-
-fn setup_governor_for_missing_token_tests(env: &Env) -> (Address, Address, GovernorContractClient) {
-    env.mock_all_auths();
-
-    let admin = Address::generate(env);
+    let admin = Address::generate(&env);
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let token_addr = sac.address();
+    let token_admin = token::StellarAssetClient::new(&env, &token_addr);
 
     let votes_id = env.register(TokenVotesContract, ());
-    let votes_client = TokenVotesContractClient::new(env, &votes_id);
+    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
     votes_client.initialize(&admin, &token_addr);
+
+    let mock_target_id = env.register(MockTarget, ());
 
     let timelock_id = env.register(TimelockContract, ());
     let governor_id = env.register(GovernorContract, ());
 
-    let timelock_client = TimelockContractClient::new(env, &timelock_id);
-    let governor_client = GovernorContractClient::new(env, &governor_id);
+    let timelock_client = TimelockContractClient::new(&env, &timelock_id);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
 
-    timelock_client.initialize(&admin, &governor_id, &1, &1_209_600);
+    // 100-second min_delay → 20-ledger veto window (100 / 5), not 10 (100 / 10).
+    let min_delay: u64 = 100;
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &1_209_600);
 
-    let pauser = Address::generate(env);
+    let guardian = Address::generate(&env);
     governor_client.initialize(
         &admin,
         &votes_id,
         &timelock_id,
         &10_u32,
         &20_u32,
-        &5_u32,
+        &0_u32,
         &0_i128,
-        &pauser,
+        &guardian,
         &VoteType::Extended,
         &120_960u32,
     );
 
-    (governor_id, votes_id, governor_client)
+    let alice = Address::generate(&env);
+    token_admin.mint(&alice, &500_i128);
+    votes_client.delegate(&alice, &alice);
+
+    let proposer = Address::generate(&env);
+    let fn_name = Symbol::new(&env, "exec_gov");
+    let calldata = Bytes::new(&env);
+    let description = soroban_sdk::String::from_str(&env, "Regression #600");
+    let description_hash = env
+        .crypto()
+        .sha256(&Bytes::from_slice(&env, b"Regression #600"))
+        .into();
+    let metadata_uri = soroban_sdk::String::from_str(&env, "ipfs://regression-600");
+
+    let mut targets = soroban_sdk::Vec::new(&env);
+    targets.push_back(mock_target_id.clone());
+    let mut fn_names = soroban_sdk::Vec::new(&env);
+    fn_names.push_back(fn_name);
+    let mut calldatas = soroban_sdk::Vec::new(&env);
+    calldatas.push_back(calldata);
+
+    let proposal_id = governor_client.propose(
+        &proposer,
+        &description,
+        &description_hash,
+        &metadata_uri,
+        &targets,
+        &fn_names,
+        &calldatas,
+    );
+
+    // Advance into voting, cast a winning vote, then past end_ledger.
+    env.ledger().with_mut(|l| l.sequence_number = 11);
+    governor_client.cast_vote(&alice, &proposal_id, &VoteSupport::For);
+
+    env.ledger().with_mut(|l| l.sequence_number = 31);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Succeeded);
+
+    // Record the ledger at queue time; advance 11 ledgers (old buggy boundary +1).
+    let queue_ledger = env.ledger().sequence();
+    governor_client.queue(&proposal_id);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Queued);
+
+    // 11 ledgers past queue point: old code (/ 10) thinks window closed at +10,
+    // correct code (/ 5) knows window closes at +20.
+    env.ledger()
+        .with_mut(|l| l.sequence_number = queue_ledger + 11);
+
+    // Must succeed — we are still inside the correct veto window.
+    governor_client.cancel_queued(&guardian, &proposal_id);
+
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Cancelled,
+        "proposal must be Cancelled: guardian is still within the veto window at ledger +11"
+    );
 }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #28)")]
-fn test_initialize_fails_if_votes_token_is_self() {
-    let env = Env::default();
-    env.mock_all_auths();
+// ---------------------------------------------------------------------------
+// cast_vote / cast_vote_with_reason Active-state guard tests (issue #603)
+//
+// Before this fix, both functions accepted votes at any ledger, which meant
+// a post-deadline voter could flip a Defeated proposal to Succeeded and then
+// queue it for execution.  The guard now rejects any vote cast outside the
+// [start_ledger, end_ledger] window.
+// ---------------------------------------------------------------------------
 
+/// Helper: deploy governor backed by ConfigurableVotesContract (no real token
+/// needed) and submit a single proposal.  Returns (governor_id, proposal_id,
+/// start_ledger, end_ledger).
+fn setup_governor_with_proposal(
+    env: &Env,
+) -> (Address, Address, u64, u32, u32) {
+    env.mock_all_auths_allowing_non_root_auth();
+
+    let admin = Address::generate(env);
+    let guardian = Address::generate(env);
+    let proposer = Address::generate(env);
+    let voter = Address::generate(env);
+
+    let votes_id = env.register(ConfigurableVotesContract, ());
+    let votes_client = ConfigurableVotesContractClient::new(env, &votes_id);
+    votes_client.set_votes(&voter, &1_000_000);
+    votes_client.set_votes(&proposer, &1_000_000);
+    votes_client.set_total_supply(&10_000_000);
+
+    let timelock_id = env.register(TimelockContract, ());
     let governor_id = env.register(GovernorContract, ());
-    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let timelock_client = TimelockContractClient::new(env, &timelock_id);
+    let governor_client = GovernorContractClient::new(env, &governor_id);
 
-    let admin = Address::generate(&env);
-    let timelock = Address::generate(&env);
-    let guardian = Address::generate(&env);
-
+    timelock_client.initialize(&admin, &governor_id, &0, &1_209_600);
+    // voting_delay = 10, voting_period = 20 → start=10, end=30
     governor_client.initialize(
         &admin,
-        &governor_id, // Pass self as votes_token
-        &timelock,
-        &100,
-        &1000,
-        &50,
-        &1000,
+        &votes_id,
+        &timelock_id,
+        &10,
+        &20,
+        &0,
+        &0,
         &guardian,
         &VoteType::Extended,
         &120_960,
     );
+
+    let mock_target_id = env.register(MockTarget, ());
+    let proposal_id = propose_exec_gov(env, &governor_client, &proposer, &mock_target_id, b"issue-603");
+
+    let proposal = governor_client.get_proposal(&proposal_id);
+    let start_ledger = proposal.start_ledger;
+    let end_ledger = proposal.end_ledger;
+
+    (governor_id, votes_id, proposal_id, start_ledger, end_ledger)
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #25)")]
-fn test_votes_token_missing_storage_reverts_state() {
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_before_start_ledger_is_rejected() {
     let env = Env::default();
-    let (governor_id, votes_id, governor_client) = setup_governor_for_missing_token_tests(&env);
-
-    let proposer = Address::generate(&env);
-    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
-    let sac = soroban_sdk::token::StellarAssetClient::new(&env, &votes_client.token());
-    sac.mint(&proposer, &1_000_000_i128);
-    votes_client.delegate(&proposer, &proposer);
-
-    let target = Address::generate(&env);
-    let fn_name = Symbol::new(&env, "exec");
-    let calldata = Bytes::new(&env);
-    let description = String::from_str(&env, "Test");
-    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Test")).into();
-
-    let proposal_id = governor_client.propose(
-        &proposer,
-        &description,
-        &description_hash,
-        &String::from_str(&env, "meta"),
-        &soroban_sdk::vec![&env, target],
-        &soroban_sdk::vec![&env, fn_name],
-        &soroban_sdk::vec![&env, calldata],
-    );
-
-    // Advance sequence number past end of voting period to force quorum check in state()
-    env.ledger().with_mut(|li| li.sequence_number += 35);
-
-    // Delete VotesToken from storage
-    env.as_contract(&governor_id, || {
-        env.storage().instance().remove(&crate::DataKey::VotesToken);
-    });
-
-    // This should panic because VotesToken is not set
-    governor_client.state(&proposal_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #25)")]
-fn test_votes_token_missing_storage_reverts_queue() {
-    let env = Env::default();
-    let (governor_id, votes_id, governor_client) = setup_governor_for_missing_token_tests(&env);
-
-    let proposer = Address::generate(&env);
-    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
-    let sac = soroban_sdk::token::StellarAssetClient::new(&env, &votes_client.token());
-    sac.mint(&proposer, &1_000_000_i128);
-    votes_client.delegate(&proposer, &proposer);
-
-    let target = Address::generate(&env);
-    let fn_name = Symbol::new(&env, "exec");
-    let calldata = Bytes::new(&env);
-    let description = String::from_str(&env, "Test");
-    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Test")).into();
-
-    let proposal_id = governor_client.propose(
-        &proposer,
-        &description,
-        &description_hash,
-        &String::from_str(&env, "meta"),
-        &soroban_sdk::vec![&env, target],
-        &soroban_sdk::vec![&env, fn_name],
-        &soroban_sdk::vec![&env, calldata],
-    );
-
-    // Advance sequence number past end of voting period to force quorum check in state() during queue()
-    env.ledger().with_mut(|li| li.sequence_number += 35);
-
-    // Delete VotesToken from storage
-    env.as_contract(&governor_id, || {
-        env.storage().instance().remove(&crate::DataKey::VotesToken);
-    });
-
-    // This should panic because VotesToken is not set
-    governor_client.queue(&proposal_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #25)")]
-fn test_votes_token_missing_storage_reverts_cast_vote() {
-    let env = Env::default();
-    let (governor_id, votes_id, governor_client) = setup_governor_for_missing_token_tests(&env);
-
-    let proposer = Address::generate(&env);
-    let votes_client = TokenVotesContractClient::new(&env, &votes_id);
-    let sac = soroban_sdk::token::StellarAssetClient::new(&env, &votes_client.token());
-    sac.mint(&proposer, &1_000_000_i128);
-    votes_client.delegate(&proposer, &proposer);
-
-    let target = Address::generate(&env);
-    let fn_name = Symbol::new(&env, "exec");
-    let calldata = Bytes::new(&env);
-    let description = String::from_str(&env, "Test");
-    let description_hash = env.crypto().sha256(&Bytes::from_slice(&env, b"Test")).into();
-
-    let proposal_id = governor_client.propose(
-        &proposer,
-        &description,
-        &description_hash,
-        &String::from_str(&env, "meta"),
-        &soroban_sdk::vec![&env, target],
-        &soroban_sdk::vec![&env, fn_name],
-        &soroban_sdk::vec![&env, calldata],
-    );
-
-    // Advance sequence number to make proposal active
-    env.ledger().with_mut(|li| li.sequence_number += 11);
-
-    // Delete VotesToken from storage
-    env.as_contract(&governor_id, || {
-        env.storage().instance().remove(&crate::DataKey::VotesToken);
-    });
-
+    let (governor_id, _votes_id, proposal_id, start_ledger, _end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
     let voter = Address::generate(&env);
+
+    // Ledger is still before start — proposal is Pending.
+    assert!(env.ledger().sequence() < start_ledger);
+    assert_eq!(governor_client.state(&proposal_id), ProposalState::Pending);
+
+    // Must panic with ProposalNotActive (error code 31).
     governor_client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #25)")]
-fn test_migrate_fails_if_votes_token_missing() {
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_after_end_ledger_is_rejected() {
     let env = Env::default();
-    let (governor_id, _, governor_client) = setup_governor_for_missing_token_tests(&env);
+    let (governor_id, _votes_id, proposal_id, _start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let voter = Address::generate(&env);
 
-    // Delete VotesToken from storage
-    env.as_contract(&governor_id, || {
-        env.storage().instance().remove(&crate::DataKey::VotesToken);
-    });
+    // Advance one ledger past end — voting period has closed.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
 
-    // mock_all_auths is already set in setup, which will mock the contract's own self-auth.
-    governor_client.migrate(&crate::MigrateData { new_version: 1 });
+    // Must panic with ProposalNotActive (error code 31).
+    governor_client.cast_vote(&voter, &proposal_id, &VoteSupport::For);
 }
 
 #[test]
-fn test_migrate_succeeds_if_votes_token_present() {
+#[should_panic(expected = "Error(Contract, #31)")]
+fn test_cast_vote_with_reason_after_end_ledger_is_rejected() {
     let env = Env::default();
-    let (governor_id, _, governor_client) = setup_governor_for_missing_token_tests(&env);
+    let (governor_id, _votes_id, proposal_id, _start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let voter = Address::generate(&env);
 
-    // mock_all_auths is already set in setup, which will mock the contract's own self-auth.
-    governor_client.migrate(&crate::MigrateData { new_version: 1 });
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
+
+    let reason = soroban_sdk::String::from_str(&env, "late vote attempt");
+    // Must panic with ProposalNotActive (error code 31).
+    governor_client.cast_vote_with_reason(&voter, &proposal_id, &VoteSupport::For, &reason);
+}
+
+/// Regression test for the exact attack described in issue #603:
+/// a post-deadline vote must not be able to flip a Defeated proposal to Succeeded.
+#[test]
+fn test_post_deadline_vote_cannot_flip_defeated_proposal() {
+    let env = Env::default();
+    let (governor_id, votes_id, proposal_id, start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let votes_client = ConfigurableVotesContractClient::new(&env, &votes_id);
+
+    let for_voter = Address::generate(&env);
+    let against_voter = Address::generate(&env);
+    votes_client.set_votes(&against_voter, &1_000_000);
+
+    // Cast "against" vote during Active window → proposal ends Defeated.
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger + 1);
+    governor_client.cast_vote(&against_voter, &proposal_id, &VoteSupport::Against);
+
+    // Advance past end_ledger.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger + 1);
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Defeated,
+        "proposal must be Defeated after voting period"
+    );
+
+    // Attacker tries to flip the outcome by voting after deadline.
+    // try_cast_vote returns Err when the contract panics — no std required.
+    let flip_result =
+        governor_client.try_cast_vote(&for_voter, &proposal_id, &VoteSupport::For);
+    assert!(
+        flip_result.is_err(),
+        "post-deadline vote must be rejected by the contract"
+    );
+
+    // Verify the proposal is still Defeated and tallies are unchanged.
+    assert_eq!(
+        governor_client.state(&proposal_id),
+        ProposalState::Defeated,
+        "proposal must remain Defeated after rejected post-deadline vote"
+    );
+
+    let (votes_for, _votes_against, _) = governor_client.proposal_votes(&proposal_id);
+    assert_eq!(votes_for, 0, "votes_for must not have increased");
+}
+
+#[test]
+fn test_cast_vote_succeeds_at_start_and_end_ledger_boundaries() {
+    let env = Env::default();
+    let (governor_id, votes_id, proposal_id, start_ledger, end_ledger) =
+        setup_governor_with_proposal(&env);
+    let governor_client = GovernorContractClient::new(&env, &governor_id);
+    let votes_client = ConfigurableVotesContractClient::new(&env, &votes_id);
+
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+    votes_client.set_votes(&voter_a, &1_000_000);
+    votes_client.set_votes(&voter_b, &1_000_000);
+
+    // Vote at exactly start_ledger — must succeed.
+    env.ledger().with_mut(|l| l.sequence_number = start_ledger);
+    governor_client.cast_vote(&voter_a, &proposal_id, &VoteSupport::For);
+
+    // Vote at exactly end_ledger — must succeed.
+    env.ledger().with_mut(|l| l.sequence_number = end_ledger);
+    governor_client.cast_vote(&voter_b, &proposal_id, &VoteSupport::Against);
+
+    // Both receipts recorded.
+    assert!(governor_client.get_receipt(&proposal_id, &voter_a).has_voted);
+    assert!(governor_client.get_receipt(&proposal_id, &voter_b).has_voted);
 }

@@ -1,5 +1,6 @@
 import { Response, Router } from "express";
 import { z } from "zod";
+import crypto from "crypto";
 import pool from "../db/pool";
 import { authenticate, AuthRequest } from "../middleware/auth";
 import { validate } from "../middleware/validate";
@@ -54,6 +55,20 @@ const markReadSchema = z.object({
   ids: z.array(z.coerce.number().int()).optional(),
   all: z.boolean().optional(),
 });
+
+const webhookSchema = z.object({
+  callback_url: z.string().url(),
+  event_filter: z.array(z.string().min(1).max(64)).optional().default([]),
+});
+
+const VALID_EVENTS = new Set([
+  "created_self",
+  "active",
+  "voting_ends_soon",
+  "outcome",
+  "queued",
+  "executed",
+]);
 
 // GET /notifications/preferences - get current preferences (auth required)
 router.get("/preferences", authenticate, async (req: AuthRequest, res) => {
@@ -203,6 +218,45 @@ router.post(
     } catch (error) {
       logger.error({ err: error }, "Error marking notifications read");
       res.status(500).json({ error: "Failed to mark read" });
+    }
+  },
+);
+
+// POST /notifications/webhook - register a webhook subscription (auth required)
+router.post(
+  "/webhook",
+  authenticate,
+  validate({ body: webhookSchema }),
+  async (req: AuthRequest, res: Response) => {
+    const userId = req.userId!;
+    const { callback_url, event_filter } = req.body as {
+      callback_url: string;
+      event_filter: string[];
+    };
+
+    for (const ev of event_filter) {
+      if (!VALID_EVENTS.has(ev)) {
+        res.status(400).json({
+          error: `Invalid event: ${ev}. Valid events: ${[...VALID_EVENTS].join(", ")}`,
+        });
+        return;
+      }
+    }
+
+    try {
+      const hmac_secret = crypto.randomBytes(32).toString("hex");
+
+      const inserted = await pool.query(
+        `INSERT INTO webhook_subscriptions (user_id, callback_url, hmac_secret, event_filter)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, callback_url, event_filter, active, created_at`,
+        [userId, callback_url, hmac_secret, event_filter],
+      );
+
+      res.status(201).json(inserted.rows[0]);
+    } catch (error) {
+      logger.error({ err: error }, "Error registering webhook");
+      res.status(500).json({ error: "Failed to register webhook" });
     }
   },
 );

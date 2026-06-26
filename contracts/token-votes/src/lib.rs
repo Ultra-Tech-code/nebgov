@@ -135,8 +135,10 @@ impl TokenVotesContract {
         new_record.balance = balance;
 
         if balance > record.balance {
-            // Balance increased: average in the new tokens at current ledger
             let added = balance - record.balance;
+            // When record.balance == 0 (first delegation), this simplifies to:
+            //   total_weighted_start = balance * current_ledger
+            //   start_ledger = current_ledger  (correct for new delegators)
             let total_weighted_start =
                 (record.balance * record.start_ledger as i128) + (added * current_ledger as i128);
             new_record.start_ledger = if balance > 0 {
@@ -144,8 +146,6 @@ impl TokenVotesContract {
             } else {
                 current_ledger
             };
-        } else if record.balance == 0 && balance > 0 {
-            new_record.start_ledger = current_ledger;
         }
         // If balance decreased or stayed same, record.start_ledger is preserved.
 
@@ -239,7 +239,6 @@ impl TokenVotesContract {
     }
 
     /// Get current voting power of an account.
-    /// TODO issue #8: sum power from all delegators pointing to account.
     pub fn get_votes(env: Env, account: Address) -> i128 {
         let checkpoints: soroban_sdk::Vec<Checkpoint> = env
             .storage()
@@ -1058,7 +1057,7 @@ mod tests {
 
     #[test]
     fn test_delegation_emits_events() {
-        use soroban_sdk::{testutils::Events as _, TryIntoVal as _};
+        use soroban_sdk::TryIntoVal as _;
         let env = Env::default();
         env.mock_all_auths();
 
@@ -1075,8 +1074,12 @@ mod tests {
         client.delegate(&delegator, &delegatee);
 
         let events = env.events().all();
-        let sub_events: soroban_sdk::Vec<_> =
-            events.iter().filter(|e| e.0 == contract_id).collect();
+        let mut sub_events: soroban_sdk::Vec<_> = soroban_sdk::Vec::new(&env);
+        for event in events.iter() {
+            if event.0 == contract_id {
+                sub_events.push_back(event.clone());
+            }
+        }
         assert!(sub_events.len() >= 2);
 
         // The last contract event must be the canonical DelegateChanged event
@@ -1134,6 +1137,9 @@ mod tests {
         assert_eq!(client.get_past_votes(&user1, &10), 1500);
         assert_eq!(client.get_past_votes(&user1, &15), 1500);
         assert_eq!(client.get_past_votes(&user1, &20), 1300);
+
+        // Advance ledger to 100 so we can query that past ledger.
+        env.ledger().with_mut(|l| l.sequence_number = 100);
         assert_eq!(client.get_past_votes(&user1, &100), 1300);
     }
 
@@ -1361,6 +1367,9 @@ mod tests {
         assert_eq!(client.get_past_votes(&a, &15), 1000); // while delegated to a
         assert_eq!(client.get_past_votes(&a, &25), 0); // after delegation moved to b
         assert_eq!(client.get_past_votes(&b, &25), 1000); // while delegated to b
+
+        // Advance ledger so &35 is not a future ledger.
+        env.ledger().with_mut(|l| l.sequence_number = 35);
         assert_eq!(client.get_past_votes(&b, &35), 0); // after delegation moved to c
     }
 
@@ -1394,6 +1403,8 @@ mod tests {
         assert_eq!(client.get_past_votes(&delegatee, &49), 0);
 
         // One ledger after the checkpoint \u2014 the last checkpoint still applies.
+        // Advance ledger so &51 is not in the future.
+        env.ledger().with_mut(|l| l.sequence_number = 51);
         assert_eq!(client.get_past_votes(&delegatee, &51), 100);
     }
 
@@ -1775,6 +1786,30 @@ mod tests {
         client.delegate_by_sig(&owner, &delegatee2, &1u64, &9999u64, &dummy_sig);
         assert_eq!(client.get_votes(&delegatee1), 0);
         assert_eq!(client.get_votes(&delegatee2), 300);
+    }
+
+    #[test]
+    fn test_new_delegator_start_ledger_is_current_ledger() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let delegator = Address::generate(&env);
+        let delegatee = Address::generate(&env);
+
+        let (contract_id, token_addr) = setup(&env, &admin);
+        let client = TokenVotesContractClient::new(&env, &contract_id);
+        let sac_client = token::StellarAssetClient::new(&env, &token_addr);
+
+        sac_client.mint(&delegator, &100i128);
+
+        env.ledger().with_mut(|l| l.sequence_number = 42);
+
+        client.delegate(&delegator, &delegatee);
+
+        let record = client.get_delegator_record(&delegator);
+        assert_eq!(record.start_ledger, 42);
+        assert_eq!(record.balance, 100);
     }
 
 }

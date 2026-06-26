@@ -250,3 +250,10 @@ pub fn emit_unpaused(env: &Env) {
         },
     );
 }
+
+pub fn emit_pauser_changed(env: &Env, old_pauser: &Address, new_pauser: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "PauserChanged"),),
+        (old_pauser.clone(), new_pauser.clone()),
+    );
+}

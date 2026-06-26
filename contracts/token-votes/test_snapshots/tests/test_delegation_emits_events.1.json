@@ -918,7 +918,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "del_chsh"
+                "symbol": "DelegateChanged"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"

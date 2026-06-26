@@ -374,6 +374,17 @@
                               "lo": 500
                             }
                           }
+                        },
+                        {
+                          "key": {
+                            "symbol": "weighted_sum"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 0
+                            }
+                          }
                         }
                       ]
                     }
@@ -423,6 +434,71 @@
                 "durability": "persistent",
                 "val": {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "DelegatorRecord"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "DelegatorRecord"
+                    },
+                    {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "map": [
+                    {
+                      "key": {
+                        "symbol": "balance"
+                      },
+                      "val": {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 500
+                        }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "start_ledger"
+                      },
+                      "val": {
+                        "u32": 0
+                      }
+                    }
+                  ]
                 }
               }
             },
@@ -527,6 +603,17 @@
                               "lo": 500
                             }
                           }
+                        },
+                        {
+                          "key": {
+                            "symbol": "weighted_sum"
+                          },
+                          "val": {
+                            "i128": {
+                              "hi": 0,
+                              "lo": 0
+                            }
+                          }
                         }
                       ]
                     }
@@ -584,6 +671,30 @@
                         },
                         "val": {
                           "u32": 100800
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "TimeWeightEnabled"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": false
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "TimeWeightScale"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 4204800
                         }
                       },
                       {

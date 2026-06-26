@@ -102,5 +102,48 @@ describe("Notification Endpoints", () => {
     await request(app).get("/notifications/preferences").expect(401);
     await request(app).post("/notifications/preferences").send({}).expect(401);
   });
+
+  describe("Webhook Endpoints", () => {
+    it("POST /notifications/webhook creates a subscription", async () => {
+      const res = await request(app)
+        .post("/notifications/webhook")
+        .set("Authorization", `Bearer ${authToken}`)
+        .send({
+          callback_url: "https://example.com/webhook",
+          event_filter: ["queued", "executed"],
+        })
+        .expect(201);
+
+      expect(res.body).toHaveProperty("id");
+      expect(res.body.callback_url).toBe("https://example.com/webhook");
+      expect(res.body.event_filter).toEqual(["queued", "executed"]);
+      expect(res.body.active).toBe(true);
+    });
+
+    it("POST /notifications/webhook rejects invalid event filter", async () => {
+      await request(app)
+        .post("/notifications/webhook")
+        .set("Authorization", `Bearer ${authToken}`)
+        .send({
+          callback_url: "https://example.com/webhook",
+          event_filter: ["invalid_event"],
+        })
+        .expect(400);
+    });
+
+    it("POST /notifications/webhook requires auth", async () => {
+      await request(app)
+        .post("/notifications/webhook")
+        .send({ callback_url: "https://example.com/webhook" })
+        .expect(401);
+    });
+
+    afterAll(async () => {
+      await pool.query(
+        "DELETE FROM webhook_subscriptions WHERE user_id = $1",
+        [userId],
+      );
+    });
+  });
 });
 

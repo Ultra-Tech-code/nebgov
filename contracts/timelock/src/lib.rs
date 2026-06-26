@@ -73,6 +73,9 @@ impl TimelockContract {
         min_delay: u64,
         execution_window: u64,
     ) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic!("already initialized");
+        }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Governor, &governor);

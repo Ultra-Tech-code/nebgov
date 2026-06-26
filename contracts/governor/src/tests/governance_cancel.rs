@@ -14,6 +14,13 @@ fn test_cancel_by_governance_success() {
     let timelock_id = env.register(TimelockContract, ());
     let governor_id = env.register(GovernorContract, ());
 
+    // Initialize the timelock so its MinDelay and ExecutionWindow storage keys
+    // are set; some timelock methods expect these values to exist.
+    let timelock_client = sorogov_timelock::TimelockContractClient::new(&env, &timelock_id);
+    let min_delay: u64 = 1;
+    let execution_window: u64 = 86_400;
+    timelock_client.initialize(&admin, &governor_id, &min_delay, &execution_window);
+
     let governor_client = GovernorContractClient::new(&env, &governor_id);
 
     governor_client.initialize(

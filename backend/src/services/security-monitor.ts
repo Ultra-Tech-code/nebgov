@@ -32,6 +32,7 @@ export class SecurityMonitorService {
   private networkPassphrase: string;
   private interval: NodeJS.Timeout | null = null;
   private isScanning: boolean = false;
+  private currentGovernorContractId: string | null = null;
 
   constructor() {
     const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
@@ -97,7 +98,7 @@ export class SecurityMonitorService {
   }
 
   private async processEvents(startLedger: number, endLedger: number) {
-    const governorId = process.env.GOVERNOR_CONTRACT_ID;
+    const governorId = await this.resolveGovernorContractId();
     const tokenVotesId = process.env.TOKEN_VOTES_CONTRACT_ID;
 
     if (!governorId || !tokenVotesId) {
@@ -112,6 +113,38 @@ export class SecurityMonitorService {
 
     await this.checkGovernorEvents(governorId, startLedger, endLedger);
     await this.checkTokenVotesEvents(tokenVotesId, startLedger, endLedger);
+  }
+
+  private async resolveGovernorContractId(): Promise<string | null> {
+    const fallbackGovernorId = process.env.GOVERNOR_CONTRACT_ID?.trim() || null;
+
+    try {
+      const result = await pool.query(
+        "SELECT value FROM monitoring_state WHERE key = 'active_governor_contract_id' LIMIT 1",
+      );
+      const dbGovernorId =
+        result.rows.length > 0 ? String(result.rows[0].value ?? "").trim() : "";
+
+      if (dbGovernorId.length > 0) {
+        if (this.currentGovernorContractId !== dbGovernorId) {
+          logger.info({ governorContractId: dbGovernorId }, "Resolved governor contract ID from DB");
+          this.currentGovernorContractId = dbGovernorId;
+        }
+        return dbGovernorId;
+      }
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to resolve governor contract ID from DB; using env fallback");
+    }
+
+    if (this.currentGovernorContractId !== fallbackGovernorId) {
+      logger.info(
+        { governorContractId: fallbackGovernorId },
+        "Resolved governor contract ID from environment",
+      );
+      this.currentGovernorContractId = fallbackGovernorId;
+    }
+
+    return fallbackGovernorId;
   }
 
   private async checkGovernorEvents(contractId: string, start: number, end: number) {

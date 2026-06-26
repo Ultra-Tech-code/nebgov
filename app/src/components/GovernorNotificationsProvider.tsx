@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Subscribes to governor `prop_crtd` events and polls proposal state while a
- * wallet is connected. Shows browser Notification + appends local history when
- * toggles allow.
+ * Subscribes to governor events via the indexer WebSocket (with polling
+ * fallback) and polls proposal state while a wallet is connected.
+ * Shows browser Notification + appends local history when toggles allow.
  */
 
 import { useEffect, useRef } from "react";
@@ -13,6 +13,7 @@ import {
   subscribeToProposals,
   getProposalEvents,
   parseProposalCreatedEvent,
+  streamEvents,
 } from "@nebgov/sdk";
 import { useWallet } from "../lib/wallet-context";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../lib/governance-notifications";
 import {
   readGovernorConfig,
+  readIndexerUrl,
   subscriptionOptsFromConfig,
 } from "../lib/nebgov-env";
 
@@ -325,9 +327,43 @@ export function GovernorNotificationsProvider({
     void tick();
     const pollTimer = window.setInterval(() => void tick(), POLL_MS);
 
+    const indexerUrl = readIndexerUrl();
+    const unsubStream = indexerUrl
+      ? streamEvents(
+          indexerUrl,
+          (event) => {
+            if (event.type === "proposal_created") {
+              const d = event.data;
+              const id = BigInt(String(d.id ?? 0));
+              mergeProposalMetaEntry(id, {
+                endLedger: Number(d.end_ledger ?? 0),
+                startLedger: Number(d.start_ledger ?? 0),
+                proposer: String(d.proposer ?? ""),
+              });
+              const toggles = loadNotificationToggles();
+              if (toggles.created_self && sameStrKey(String(d.proposer ?? ""), publicKey)) {
+                appendNotificationHistory({
+                  kind: "created_self",
+                  proposalId: id.toString(),
+                  title: `Your proposal #${id} was created`,
+                  body: "It was submitted on-chain from your wallet.",
+                });
+                showSystemNotification(
+                  `Proposal #${id} created`,
+                  "Your wallet submitted this proposal.",
+                  `nebgov-created-${id}`
+                );
+              }
+            }
+          },
+          { types: ["proposal_created", "vote_cast", "proposal_queued", "proposal_executed"] }
+        )
+      : undefined;
+
     return () => {
       stopped = true;
       unsubProposals();
+      unsubStream?.();
       window.clearInterval(pollTimer);
     };
   }, [isConnected, publicKey]);

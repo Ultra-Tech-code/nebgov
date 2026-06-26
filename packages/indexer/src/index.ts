@@ -1,8 +1,10 @@
+import { createServer } from "http";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import dotenv from "dotenv";
 import { initDb, pool } from "./db";
 import { processEvents, getLastIndexedLedger, updateLastIndexedLedger } from "./events";
 import { createApp } from "./api";
+import { createWsServer } from "./ws";
 
 dotenv.config();
 
@@ -85,11 +87,14 @@ async function main(): Promise<void> {
   await initDb();
   console.log("Database initialized");
 
-  // Start REST API server
-  const server = new SorobanRpc.Server(RPC_URL, { allowHttp: false });
-  const app = createApp(server);
-  app.listen(PORT, () => {
+  // Start REST API + WebSocket server
+  const rpcServer = new SorobanRpc.Server(RPC_URL, { allowHttp: false });
+  const app = createApp(rpcServer);
+  const httpServer = createServer(app);
+  createWsServer(httpServer);
+  httpServer.listen(PORT, () => {
     console.log(`NebGov indexer API running on port ${PORT}`);
+    console.log(`WebSocket endpoint: ws://localhost:${PORT}/events`);
   });
 
   // Start indexer loop

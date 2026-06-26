@@ -38,7 +38,14 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
   set +a
 else
-  if [[ -f "$ROOT_DIR/.env.example" ]]; then
+  if [[ -f "$ROOT_DIR/.env.testnet.example" ]]; then
+    info "No $ENV_FILE found — copying from .env.testnet.example"
+    cp "$ROOT_DIR/.env.testnet.example" "$ENV_FILE"
+    set -a
+    # shellcheck source=/dev/null
+    source "$ENV_FILE"
+    set +a
+  elif [[ -f "$ROOT_DIR/.env.example" ]]; then
     info "No $ENV_FILE found — copying from .env.example"
     cp "$ROOT_DIR/.env.example" "$ENV_FILE"
     set -a
@@ -176,6 +183,7 @@ stellar contract invoke \
 # -- Initialize timelock (use governor address or deployer as placeholder) -
 TIMELOCK_GOVERNOR="${GOVERNOR_ADDRESS:-$DEPLOYER_ADDR}"
 TIMELOCK_DELAY="${TIMELOCK_MIN_DELAY:-3600}"
+TIMELOCK_WINDOW="${TIMELOCK_EXECUTION_WINDOW:-86400}"
 
 info "Initializing timelock ..."
 stellar contract invoke \
@@ -186,8 +194,13 @@ stellar contract invoke \
   --admin "$DEPLOYER_ADDR" \
   --governor "$TIMELOCK_GOVERNOR" \
   --min_delay "$TIMELOCK_DELAY" \
+  --execution_window "$TIMELOCK_WINDOW" \
   2>/dev/null && ok "timelock initialized" \
   || warn "timelock already initialized (or init failed — check manually)"
+
+# Persist timelock parameters
+persist "TIMELOCK_MIN_DELAY" "$TIMELOCK_DELAY"
+persist "TIMELOCK_EXECUTION_WINDOW" "$TIMELOCK_WINDOW"
 
 # -- Initialize governor ----------------------------------------------
 DELAY="${VOTING_DELAY:-60}"
@@ -267,6 +280,8 @@ info "============================================================"
 info "  Deployer ............. $DEPLOYER_ADDR"
 info "  Token-Votes .......... $TOKEN_VOTES_ADDRESS"
 info "  Timelock ............. $TIMELOCK_ADDRESS"
+info "  Timelock Min Delay ... $TIMELOCK_DELAY seconds"
+info "  Timelock Exec Window . $TIMELOCK_WINDOW seconds"
 info "  Governor ............. $GOVERNOR_ADDRESS"
 info "  Treasury ............. $TREASURY_ADDRESS"
 info "  Factory .............. $FACTORY_ADDRESS"

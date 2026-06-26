@@ -6,18 +6,19 @@
  * Updated with SHA-256 hashing and metadata URI support.
  */
 
-import {
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
-import { ChevronDown, ChevronUp, Share2, Loader2, Link as LinkIcon, AlertCircle } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  Share2,
+  Loader2,
+  Link as LinkIcon,
+  AlertCircle,
+} from "lucide-react";
 import { Keypair } from "@stellar/stellar-sdk";
 import {
   GovernorClient,
@@ -102,10 +103,19 @@ function getClients() {
   const governorAddress = process.env.NEXT_PUBLIC_GOVERNOR_ADDRESS;
   const timelockAddress = process.env.NEXT_PUBLIC_TIMELOCK_ADDRESS;
   const votesAddress = process.env.NEXT_PUBLIC_VOTES_ADDRESS;
-  const network = (process.env.NEXT_PUBLIC_NETWORK || "testnet") as "mainnet" | "testnet" | "futurenet";
+  const network = (process.env.NEXT_PUBLIC_NETWORK || "testnet") as
+    | "mainnet"
+    | "testnet"
+    | "futurenet";
   const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
   if (!governorAddress || !timelockAddress || !votesAddress) return null;
-  const cfg = { governorAddress, timelockAddress, votesAddress, network, ...(rpcUrl ? { rpcUrl } : {}) };
+  const cfg = {
+    governorAddress,
+    timelockAddress,
+    votesAddress,
+    network,
+    ...(rpcUrl ? { rpcUrl } : {}),
+  };
   return {
     governor: new GovernorClient(cfg),
     votes: new VotesClient(cfg),
@@ -183,10 +193,19 @@ function ProposeWizardInner() {
   // Simulation / review data
   const [votes, setVotes] = useState<bigint | null>(null);
   const [threshold, setThreshold] = useState<bigint | null>(null);
-  const [canProposeResult, setCanProposeResult] = useState<CanProposeResult | null>(null);
-  const [estimate, setEstimate] = useState<{ cpuInsns?: string; memBytes?: string } | null>(null);
+  const [canProposeResult, setCanProposeResult] =
+    useState<CanProposeResult | null>(null);
+  const [estimate, setEstimate] = useState<{
+    cpuInsns?: string;
+    memBytes?: string;
+  } | null>(null);
   const [estimateErr, setEstimateErr] = useState<string | null>(null);
   const [simBusy, setSimBusy] = useState<string | null>(null);
+
+  // Early eligibility check for step 1
+  const [earlyEligibility, setEarlyEligibility] =
+    useState<CanProposeResult | null>(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(false);
 
   // Extended review data for threshold/delegate check
   const [baseVotes, setBaseVotes] = useState<bigint | null>(null);
@@ -194,7 +213,13 @@ function ProposeWizardInner() {
   const [delegateBusy, setDelegateBusy] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
 
-  const reviewDataReady = votes !== null && threshold !== null && canProposeResult !== null && estimate !== null && baseVotes !== null && delegatee !== null;
+  const reviewDataReady =
+    votes !== null &&
+    threshold !== null &&
+    canProposeResult !== null &&
+    estimate !== null &&
+    baseVotes !== null &&
+    delegatee !== null;
 
   // Hydration / Persistence
   useEffect(() => {
@@ -305,7 +330,9 @@ function ProposeWizardInner() {
       setDraft((d) => ({ ...d, ipfsRef: uri, descriptionHash: hash }));
     } catch (err) {
       console.error("IPFS upload failed:", err);
-      setStepErrors([err instanceof Error ? err.message : "IPFS upload failed"]);
+      setStepErrors([
+        err instanceof Error ? err.message : "IPFS upload failed",
+      ]);
     } finally {
       setIsUploading(false);
     }
@@ -321,7 +348,9 @@ function ProposeWizardInner() {
       err.push(`Description must be at least ${DESC_MIN} characters.`);
     }
     if (!isReasonableIpfsRef(draft.ipfsRef)) {
-      err.push("IPFS reference must be a gateway URL, ipfs:// link, or raw CID.");
+      err.push(
+        "IPFS reference must be a gateway URL, ipfs:// link, or raw CID.",
+      );
     }
     if (!draft.descriptionHash && draft.description.trim()) {
       err.push("Waiting for description hash computation...");
@@ -399,18 +428,48 @@ function ProposeWizardInner() {
     void runReviewLoads();
   }, [step, publicKey, clients, draft]);
 
+  // Load early eligibility check when wallet connects or changes
+  useEffect(() => {
+    if (!clients || !publicKey || !isConnected) {
+      setEarlyEligibility(null);
+      return;
+    }
+
+    async function checkEligibility() {
+      setEligibilityLoading(true);
+      try {
+        const result = await clients!.governor.canPropose(publicKey!);
+        setEarlyEligibility(result);
+      } catch (e) {
+        console.error("Failed to check eligibility:", e);
+      } finally {
+        setEligibilityLoading(false);
+      }
+    }
+
+    void checkEligibility();
+  }, [publicKey, isConnected, clients]);
+
   async function handleDelegateToSelf() {
     if (!clients || !publicKey) return;
     setDelegateBusy(true);
     try {
       const secret = process.env.NEXT_PUBLIC_DELEGATE_SECRET_KEY;
-      if (!secret) throw new Error("Missing NEXT_PUBLIC_DELEGATE_SECRET_KEY in .env.local");
+      if (!secret)
+        throw new Error(
+          "Missing NEXT_PUBLIC_DELEGATE_SECRET_KEY in .env.local",
+        );
       const signer = Keypair.fromSecret(secret);
       const txHash = await clients.votes.delegate(signer, publicKey);
       toast.success(
         <div>
           Delegated to yourself!{" "}
-          <a href={explorerTxUrl(txHash)} target="_blank" rel="noreferrer" className="underline">
+          <a
+            href={explorerTxUrl(txHash)}
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
             View on Explorer →
           </a>
         </div>,
@@ -443,10 +502,10 @@ function ProposeWizardInner() {
         actions: d.actions.map((x) =>
           x.id === act.id
             ? {
-              ...x,
-              simulateOk: res.ok,
-              simulateError: res.ok ? undefined : res.error,
-            }
+                ...x,
+                simulateOk: res.ok,
+                simulateError: res.ok ? undefined : res.error,
+              }
             : x,
         ),
       }));
@@ -456,10 +515,11 @@ function ProposeWizardInner() {
         actions: d.actions.map((x) =>
           x.id === act.id
             ? {
-              ...x,
-              simulateOk: false,
-              simulateError: e instanceof Error ? e.message : "Simulation failed",
-            }
+                ...x,
+                simulateOk: false,
+                simulateError:
+                  e instanceof Error ? e.message : "Simulation failed",
+              }
             : x,
         ),
       }));
@@ -495,7 +555,12 @@ function ProposeWizardInner() {
       toast.success(
         <div>
           Proposal submitted!{" "}
-          <a href={explorerTxUrl(txHash)} target="_blank" rel="noreferrer" className="underline">
+          <a
+            href={explorerTxUrl(txHash)}
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
             View on Explorer →
           </a>
         </div>,
@@ -503,7 +568,15 @@ function ProposeWizardInner() {
       );
       sessionStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(STORAGE_KEY);
-      setDraft({ title: "", description: "", descriptionHash: "", ipfsRef: "", actions: [], savedAt: 0, currentStep: 1 });
+      setDraft({
+        title: "",
+        description: "",
+        descriptionHash: "",
+        ipfsRef: "",
+        actions: [],
+        savedAt: 0,
+        currentStep: 1,
+      });
       router.push(`/propose?step=4&id=${proposalId.toString()}`);
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : "Submit failed");
@@ -518,6 +591,13 @@ function ProposeWizardInner() {
       const e = validateStep1();
       if (e.length) {
         setStepErrors(e);
+        return;
+      }
+      // Check early eligibility
+      if (isConnected && earlyEligibility && !earlyEligibility.allowed) {
+        setStepErrors([
+          earlyEligibility.reason ?? "Cannot propose at this time",
+        ]);
         return;
       }
     }
@@ -538,7 +618,10 @@ function ProposeWizardInner() {
         return;
       }
       if (votes < threshold) {
-        const shortfall = (Number(threshold - votes) / 10 ** 7).toLocaleString();
+        const shortfall = (
+          Number(threshold - votes) /
+          10 ** 7
+        ).toLocaleString();
         setStepErrors([
           `Insufficient voting power — need ${(Number(threshold) / 10 ** 7).toLocaleString()} GOV, have ${(Number(votes) / 10 ** 7).toLocaleString()} GOV (shortfall: ${shortfall} GOV).`,
         ]);
@@ -569,7 +652,9 @@ function ProposeWizardInner() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">New proposal</h1>
+      <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+        New proposal
+      </h1>
       <p className="text-gray-500 dark:text-gray-400 mb-8">
         Step-by-step flow with validation, previews, and on-chain simulation.
       </p>
@@ -580,7 +665,8 @@ function ProposeWizardInner() {
           <div className="flex items-center gap-3">
             <span className="text-amber-800 dark:text-amber-200 text-sm">
               You have an unsaved draft from{" "}
-              {new Date(savedDraftData.savedAt).toLocaleDateString()}. Restore it?
+              {new Date(savedDraftData.savedAt).toLocaleDateString()}. Restore
+              it?
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -605,16 +691,20 @@ function ProposeWizardInner() {
         {STEPS.map((s, i) => (
           <li key={s.id} className="flex items-center gap-2 flex-1 min-w-0">
             <span
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold ${step >= s.id
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold ${
+                step >= s.id
                   ? "bg-indigo-600 text-white"
                   : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-                }`}
+              }`}
             >
               {s.id}
             </span>
             <span
-              className={`truncate hidden sm:inline ${step === s.id ? "font-semibold text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"
-                }`}
+              className={`truncate hidden sm:inline ${
+                step === s.id
+                  ? "font-semibold text-gray-900 dark:text-white"
+                  : "text-gray-500 dark:text-gray-400"
+              }`}
             >
               {s.label}
             </span>
@@ -627,6 +717,49 @@ function ProposeWizardInner() {
 
       {step === 1 && (
         <div className="space-y-6">
+          {/* Early eligibility warning */}
+          {isConnected && earlyEligibility && !earlyEligibility.allowed && (
+            <div className="flex items-start gap-3 text-amber-800 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 p-4 rounded-xl text-sm border border-amber-200 dark:border-amber-800">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Cannot create proposal</p>
+                <p className="mt-1">{earlyEligibility.reason}</p>
+                {earlyEligibility.cooldownEndsAt && (
+                  <p className="mt-2 text-xs font-mono opacity-80">
+                    Cooldown ends at ledger: {earlyEligibility.cooldownEndsAt}
+                  </p>
+                )}
+                {earlyEligibility.reason.includes("threshold") && (
+                  <div className="mt-2 text-xs">
+                    <p>
+                      Your voting power:{" "}
+                      {(
+                        Number(earlyEligibility.votingPower) /
+                        10 ** 7
+                      ).toLocaleString()}{" "}
+                      GOV
+                    </p>
+                    <p>
+                      Required:{" "}
+                      {(
+                        Number(earlyEligibility.threshold) /
+                        10 ** 7
+                      ).toLocaleString()}{" "}
+                      GOV
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isConnected && eligibilityLoading && (
+            <div className="flex items-center gap-2 text-gray-500 text-sm bg-gray-50 dark:bg-gray-900/50 p-3 rounded-xl">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Checking proposal eligibility...
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Title ({TITLE_MIN}–{TITLE_MAX} characters)
@@ -673,7 +806,9 @@ function ProposeWizardInner() {
                 {draft.description.trim() ? (
                   <ReactMarkdown>{draft.description}</ReactMarkdown>
                 ) : (
-                  <span className="text-gray-400 dark:text-gray-500">Nothing to preview yet.</span>
+                  <span className="text-gray-400 dark:text-gray-500">
+                    Nothing to preview yet.
+                  </span>
                 )}
               </div>
             </div>
@@ -708,7 +843,8 @@ function ProposeWizardInner() {
               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 font-mono"
             />
             <p className="text-xs text-gray-400 mt-1">
-              Points to the full proposal metadata. The description above will be hashed and stored on-chain.
+              Points to the full proposal metadata. The description above will
+              be hashed and stored on-chain.
             </p>
           </div>
         </div>
@@ -717,9 +853,10 @@ function ProposeWizardInner() {
       {step === 2 && (
         <div className="space-y-6">
           <p className="text-sm text-gray-600">
-            Optional on-chain actions after the vote passes. Leave empty to submit a
-            governance-only signal (uses a safe <span className="font-mono">proposal_count</span>{" "}
-            placeholder on the governor).
+            Optional on-chain actions after the vote passes. Leave empty to
+            submit a governance-only signal (uses a safe{" "}
+            <span className="font-mono">proposal_count</span> placeholder on the
+            governor).
           </p>
           <button
             type="button"
@@ -788,7 +925,9 @@ function ProposeWizardInner() {
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-gray-500">Target (C… / G…)</label>
+                    <label className="text-xs text-gray-500">
+                      Target (C… / G…)
+                    </label>
                     <input
                       value={act.target}
                       onChange={(e) => {
@@ -796,7 +935,9 @@ function ProposeWizardInner() {
                         setDraft((d) => ({
                           ...d,
                           actions: d.actions.map((x) =>
-                            x.id === act.id ? { ...x, target: v, simulateOk: null } : x,
+                            x.id === act.id
+                              ? { ...x, target: v, simulateOk: null }
+                              : x,
                           ),
                         }));
                       }}
@@ -804,7 +945,9 @@ function ProposeWizardInner() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">Function name</label>
+                    <label className="text-xs text-gray-500">
+                      Function name
+                    </label>
                     <input
                       value={act.fnName}
                       onChange={(e) => {
@@ -812,7 +955,9 @@ function ProposeWizardInner() {
                         setDraft((d) => ({
                           ...d,
                           actions: d.actions.map((x) =>
-                            x.id === act.id ? { ...x, fnName: v, simulateOk: null } : x,
+                            x.id === act.id
+                              ? { ...x, fnName: v, simulateOk: null }
+                              : x,
                           ),
                         }));
                       }}
@@ -830,7 +975,11 @@ function ProposeWizardInner() {
                           ...d,
                           actions: d.actions.map((x) =>
                             x.id === act.id
-                              ? { ...x, args: [...x.args, newArgRow()], simulateOk: null }
+                              ? {
+                                  ...x,
+                                  args: [...x.args, newArgRow()],
+                                  simulateOk: null,
+                                }
                               : x,
                           ),
                         }))
@@ -851,12 +1000,12 @@ function ProposeWizardInner() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                  ...x,
-                                  args: x.args.map((r) =>
-                                    r.id === row.id ? { ...r, kind } : r,
-                                  ),
-                                  simulateOk: null,
-                                }
+                                    ...x,
+                                    args: x.args.map((r) =>
+                                      r.id === row.id ? { ...r, kind } : r,
+                                    ),
+                                    simulateOk: null,
+                                  }
                                 : x,
                             ),
                           }));
@@ -878,12 +1027,12 @@ function ProposeWizardInner() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                  ...x,
-                                  args: x.args.map((r) =>
-                                    r.id === row.id ? { ...r, value: v } : r,
-                                  ),
-                                  simulateOk: null,
-                                }
+                                    ...x,
+                                    args: x.args.map((r) =>
+                                      r.id === row.id ? { ...r, value: v } : r,
+                                    ),
+                                    simulateOk: null,
+                                  }
                                 : x,
                             ),
                           }));
@@ -899,10 +1048,10 @@ function ProposeWizardInner() {
                             actions: d.actions.map((x) =>
                               x.id === act.id
                                 ? {
-                                  ...x,
-                                  args: x.args.filter((r) => r.id !== row.id),
-                                  simulateOk: null,
-                                }
+                                    ...x,
+                                    args: x.args.filter((r) => r.id !== row.id),
+                                    simulateOk: null,
+                                  }
                                 : x,
                             ),
                           }))
@@ -917,32 +1066,44 @@ function ProposeWizardInner() {
                 <div className="pt-2 flex items-center justify-between">
                   <button
                     type="button"
-                    disabled={!act.target.trim() || !act.fnName.trim() || simBusy === act.id}
+                    disabled={
+                      !act.target.trim() ||
+                      !act.fnName.trim() ||
+                      simBusy === act.id
+                    }
                     onClick={() => simulateAction(act)}
                     className="text-xs bg-gray-100 px-3 py-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-50"
                   >
                     {simBusy === act.id ? "Simulating..." : "Simulate action"}
                   </button>
                   {act.simulateOk === true && (
-                    <span className="text-xs text-green-600 font-medium">✓ Ready</span>
+                    <span className="text-xs text-green-600 font-medium">
+                      ✓ Ready
+                    </span>
                   )}
                   {act.simulateOk === false && (
                     <span className="text-xs text-red-600 font-medium">
-                      {act.simulateError ? `Error: ${act.simulateError}` : "Simulation failed"}
+                      {act.simulateError
+                        ? `Error: ${act.simulateError}`
+                        : "Simulation failed"}
                     </span>
                   )}
                 </div>
-                {act.args.length > 0 && act.args.some((r) => r.value.trim() !== "") && (
-                  <div className="mt-3 border-t border-gray-100 pt-3">
-                    <p className="text-xs text-gray-500 mb-1">Encoded calldata (hex)</p>
-                    <pre className="text-xs font-mono bg-gray-50 rounded-lg p-2 overflow-x-auto text-gray-700 break-all">
-                      {getActionCalldataHex(act.args)}
-                    </pre>
-                    <p className="text-xs text-gray-400 mt-1">
-                      {act.args.filter((r) => r.value.trim() !== "").length} argument(s) encoded as XDR
-                    </p>
-                  </div>
-                )}
+                {act.args.length > 0 &&
+                  act.args.some((r) => r.value.trim() !== "") && (
+                    <div className="mt-3 border-t border-gray-100 pt-3">
+                      <p className="text-xs text-gray-500 mb-1">
+                        Encoded calldata (hex)
+                      </p>
+                      <pre className="text-xs font-mono bg-gray-50 rounded-lg p-2 overflow-x-auto text-gray-700 break-all">
+                        {getActionCalldataHex(act.args)}
+                      </pre>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {act.args.filter((r) => r.value.trim() !== "").length}{" "}
+                        argument(s) encoded as XDR
+                      </p>
+                    </div>
+                  )}
               </li>
             ))}
           </ul>
@@ -957,11 +1118,17 @@ function ProposeWizardInner() {
             </h2>
             <div className="space-y-4">
               <div>
-                <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">Title</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white">{draft.title}</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">
+                  Title
+                </p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white">
+                  {draft.title}
+                </p>
               </div>
               <div>
-                <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">Description Hash (SHA-256)</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">
+                  Description Hash (SHA-256)
+                </p>
                 <p className="text-sm font-mono text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 px-2 py-1 rounded">
                   {draft.descriptionHash || "Computing..."}
                 </p>
@@ -984,13 +1151,22 @@ function ProposeWizardInner() {
               On-chain actions
             </h2>
             {draft.actions.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">No on-chain actions (signal only).</p>
+              <p className="text-sm text-gray-500 italic">
+                No on-chain actions (signal only).
+              </p>
             ) : (
               <ul className="space-y-4">
                 {draft.actions.map((act, i) => (
-                  <li key={i} className="text-sm font-mono bg-gray-50 dark:bg-gray-900 p-3 rounded-lg border border-gray-100 dark:border-gray-700">
-                    <div className="text-indigo-600 dark:text-indigo-400 mb-1">{act.target}</div>
-                    <div className="text-gray-900 dark:text-gray-200">{act.fnName}({act.args.map(a => a.value).join(', ')})</div>
+                  <li
+                    key={i}
+                    className="text-sm font-mono bg-gray-50 dark:bg-gray-900 p-3 rounded-lg border border-gray-100 dark:border-gray-700"
+                  >
+                    <div className="text-indigo-600 dark:text-indigo-400 mb-1">
+                      {act.target}
+                    </div>
+                    <div className="text-gray-900 dark:text-gray-200">
+                      {act.fnName}({act.args.map((a) => a.value).join(", ")})
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1001,59 +1177,84 @@ function ProposeWizardInner() {
             <h2 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-6">
               Submission check
             </h2>
-              <div className="space-y-6">
-                {!isConnected ? (
-                  <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-4 rounded-xl text-sm">
-                    <AlertCircle className="w-5 h-5 shrink-0" />
-                    Please connect your wallet to verify permissions.
-                  </div>
-                ) : reviewLoading && (votes === null || threshold === null) ? (
-                  <div className="flex items-center gap-2 text-gray-500 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Checking voting power...
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">Your Votes</p>
-                        <p className="text-xl font-bold text-gray-900 dark:text-white">
-                          {votes === null ? "..." : (Number(votes) / 10 ** 7).toLocaleString()}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">Threshold</p>
-                        <p className="text-xl font-bold text-gray-900 dark:text-white">
-                          {threshold === null ? "..." : (Number(threshold) / 10 ** 7).toLocaleString()}
-                        </p>
-                      </div>
+            <div className="space-y-6">
+              {!isConnected ? (
+                <div className="flex items-center gap-2 text-amber-700 bg-amber-50 p-4 rounded-xl text-sm">
+                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  Please connect your wallet to verify permissions.
+                </div>
+              ) : reviewLoading && (votes === null || threshold === null) ? (
+                <div className="flex items-center gap-2 text-gray-500 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Checking voting power...
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">
+                        Your Votes
+                      </p>
+                      <p className="text-xl font-bold text-gray-900 dark:text-white">
+                        {votes === null
+                          ? "..."
+                          : (Number(votes) / 10 ** 7).toLocaleString()}
+                      </p>
                     </div>
+                    <div>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase mb-1">
+                        Threshold
+                      </p>
+                      <p className="text-xl font-bold text-gray-900 dark:text-white">
+                        {threshold === null
+                          ? "..."
+                          : (Number(threshold) / 10 ** 7).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
 
-                    {votes !== null && threshold !== null && votes < threshold && (
+                  {votes !== null &&
+                    threshold !== null &&
+                    votes < threshold && (
                       <div className="flex items-start gap-3 text-amber-800 bg-amber-50 dark:bg-amber-900/20 dark:text-amber-300 p-4 rounded-xl text-sm border border-amber-200 dark:border-amber-800">
                         <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
                         <div>
-                          <p className="font-semibold">Insufficient voting power</p>
+                          <p className="font-semibold">
+                            Insufficient voting power
+                          </p>
                           <p className="mt-1">
-                            You need {(Number(threshold) / 10 ** 7).toLocaleString()} GOV to create a proposal.
-                            Your current voting power: {(Number(votes) / 10 ** 7).toLocaleString()} GOV.
+                            You need{" "}
+                            {(Number(threshold) / 10 ** 7).toLocaleString()} GOV
+                            to create a proposal. Your current voting power:{" "}
+                            {(Number(votes) / 10 ** 7).toLocaleString()} GOV.
                           </p>
                           <p className="mt-2 text-sm font-medium">
-                            Shortfall: {(Number(threshold - votes) / 10 ** 7).toLocaleString()} GOV
+                            Shortfall:{" "}
+                            {(
+                              Number(threshold - votes) /
+                              10 ** 7
+                            ).toLocaleString()}{" "}
+                            GOV
                           </p>
                           <ul className="mt-2 text-xs list-disc list-inside space-y-0.5">
                             <li>Ask delegates to delegate to you</li>
-                            <li>Acquire more tokens and delegate to yourself</li>
+                            <li>
+                              Acquire more tokens and delegate to yourself
+                            </li>
                           </ul>
                         </div>
                       </div>
                     )}
 
-                    {baseVotes !== null && baseVotes > 0n && delegatee !== publicKey && (
+                  {baseVotes !== null &&
+                    baseVotes > 0n &&
+                    delegatee !== publicKey && (
                       <div className="flex items-center gap-3 text-blue-800 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-300 p-4 rounded-xl text-sm border border-blue-200 dark:border-blue-800">
                         <AlertCircle className="w-5 h-5 shrink-0" />
                         <p className="flex-1">
-                          You have tokens but haven&apos;t delegated &mdash; delegate to yourself first to activate your voting power.
+                          You have tokens but haven&apos;t delegated &mdash;
+                          delegate to yourself first to activate your voting
+                          power.
                         </p>
                         <button
                           type="button"
@@ -1061,12 +1262,14 @@ function ProposeWizardInner() {
                           disabled={delegateBusy}
                           className="shrink-0 bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
                         >
-                          {delegateBusy ? "Delegating..." : "Delegate to yourself"}
+                          {delegateBusy
+                            ? "Delegating..."
+                            : "Delegate to yourself"}
                         </button>
                       </div>
                     )}
-                  </>
-                )}
+                </>
+              )}
 
               {canProposeResult && !canProposeResult.allowed && (
                 <div className="flex items-start gap-3 text-red-700 bg-red-50 dark:bg-red-900/20 dark:text-red-400 p-4 rounded-xl text-sm border border-red-100 dark:border-red-900/30">
@@ -1076,7 +1279,8 @@ function ProposeWizardInner() {
                     <p className="mt-1">{canProposeResult.reason}</p>
                     {canProposeResult.cooldownEndsAt && (
                       <p className="mt-2 text-xs opacity-80">
-                        Estimated availability: Ledger {canProposeResult.cooldownEndsAt}
+                        Estimated availability: Ledger{" "}
+                        {canProposeResult.cooldownEndsAt}
                       </p>
                     )}
                   </div>
@@ -1085,15 +1289,21 @@ function ProposeWizardInner() {
 
               {estimate && (
                 <div className="border-t border-gray-100 pt-6">
-                  <p className="text-xs text-gray-400 font-medium uppercase mb-3">Resource Estimate</p>
+                  <p className="text-xs text-gray-400 font-medium uppercase mb-3">
+                    Resource Estimate
+                  </p>
                   <div className="flex gap-6 text-sm">
                     <div>
                       <span className="text-gray-500 mr-2">CPU:</span>
-                      <span className="font-mono font-medium">{Number(estimate.cpuInsns).toLocaleString()} cycles</span>
+                      <span className="font-mono font-medium">
+                        {Number(estimate.cpuInsns).toLocaleString()} cycles
+                      </span>
                     </div>
                     <div>
                       <span className="text-gray-500 mr-2">RAM:</span>
-                      <span className="font-mono font-medium">{(Number(estimate.memBytes) / 1024).toFixed(1)} KB</span>
+                      <span className="font-mono font-medium">
+                        {(Number(estimate.memBytes) / 1024).toFixed(1)} KB
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1114,10 +1324,15 @@ function ProposeWizardInner() {
           <div className="bg-green-50 dark:bg-green-900/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6">
             <span className="text-3xl">🎉</span>
           </div>
-          <p className="text-green-800 dark:text-green-400 font-semibold text-lg">Proposal created successfully</p>
-          <p className="text-5xl font-mono font-bold text-gray-900 dark:text-white my-4">#{successIdParam}</p>
+          <p className="text-green-800 dark:text-green-400 font-semibold text-lg">
+            Proposal created successfully
+          </p>
+          <p className="text-5xl font-mono font-bold text-gray-900 dark:text-white my-4">
+            #{successIdParam}
+          </p>
           <p className="text-gray-500 dark:text-gray-400 max-w-sm mx-auto mb-8">
-            Your proposal is now live and waiting for the voting delay to pass before members can cast votes.
+            Your proposal is now live and waiting for the voting delay to pass
+            before members can cast votes.
           </p>
           <div className="flex flex-wrap justify-center gap-3">
             <Link
@@ -1154,7 +1369,14 @@ function ProposeWizardInner() {
             )}
             <button
               onClick={goNext}
-              disabled={submitting || (step === 3 && (!reviewDataReady || (votes !== null && threshold !== null && votes < threshold)))}
+              disabled={
+                submitting ||
+                (step === 3 &&
+                  (!reviewDataReady ||
+                    (votes !== null &&
+                      threshold !== null &&
+                      votes < threshold)))
+              }
               className="bg-indigo-600 text-white px-8 py-2.5 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors min-w-[120px]"
             >
               {submitting ? (
@@ -1182,7 +1404,11 @@ function ProposeWizardInner() {
 
 export default function ProposeWizard() {
   return (
-    <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading wizard...</div>}>
+    <Suspense
+      fallback={
+        <div className="p-8 text-center text-gray-500">Loading wizard...</div>
+      }
+    >
       <ProposeWizardInner />
     </Suspense>
   );

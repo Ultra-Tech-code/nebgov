@@ -106,7 +106,7 @@ fn factory_deploy_produces_working_governor() {
 
     let voting_delay = 10u32;
     let voting_period = 20u32;
-    let quorum_numerator = 0u32; // Simple majority test
+    let quorum_numerator = 1u32; // 1% quorum — well within 1000 total votes
     let proposal_threshold = 0i128;
     let timelock_delay = 1u64; // 1 second for fast testing
     let guardian = admin.clone();

@@ -8,8 +8,12 @@ import { useState, useEffect, useMemo, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { GovernorClient, ProposalState, Network } from "@nebgov/sdk";
+import { ErrorState } from "../components/ErrorState";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ProposalCardSkeleton } from "../components/ui/ProposalCardSkeleton";
 import { useDebounce } from "../hooks/useDebounce";
+import { getErrorMessage, reportFrontendError } from "../lib/frontend-error";
+import { ProposalStateBadge } from "../components/ProposalStateBadge";
 
 
 interface ProposalSummary {
@@ -223,8 +227,14 @@ function ProposalsPageInner() {
         setHasMore(false);
       }
     } catch (err) {
-      console.error("Error fetching proposals:", err);
-      setError(err instanceof Error ? err.message : "Failed to load proposals");
+      reportFrontendError("proposals_page_load", err, {
+        append,
+        cursor,
+        search,
+        stateFilter,
+        sort,
+      });
+      setError(getErrorMessage(err));
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -318,12 +328,12 @@ function ProposalsPageInner() {
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
-          <p className="text-red-800 text-sm font-medium">
-            Error loading proposals
-          </p>
-          <p className="text-red-600 text-sm mt-1">{error}</p>
-        </div>
+        <ErrorState
+          title="Error loading proposals"
+          message={error}
+          onRetry={() => fetchProposals()}
+          className="mb-6"
+        />
       )}
 
       {/* Loading skeleton */}
@@ -417,7 +427,7 @@ function ProposalsPageInner() {
                     role="status"
                     aria-label={`Proposal status: ${p.state}`}
                   >
-                    {p.state}
+                    <ProposalStateBadge state={p.state} />
                   </span>
                 </div>
               </Link>
@@ -443,18 +453,20 @@ function ProposalsPageInner() {
 
 export default function ProposalsPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="space-y-4">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <ProposalCardSkeleton key={i} />
-            ))}
+    <ErrorBoundary title="Proposals">
+      <Suspense
+        fallback={
+          <div className="max-w-4xl mx-auto px-4 py-8">
+            <div className="space-y-4">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <ProposalCardSkeleton key={i} />
+              ))}
+            </div>
           </div>
-        </div>
-      }
-    >
-      <ProposalsPageInner />
-    </Suspense>
+        }
+      >
+        <ProposalsPageInner />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
